@@ -872,8 +872,11 @@ pub(crate) fn command_suggestion(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompletionSourceKind {
-    User,
-    Builtin,
+    Global,
+    Option,
+    System,
+    OtherSingleNameContext,
+    MultiNameContext,
     Other,
 }
 
@@ -886,8 +889,11 @@ pub(crate) struct CompletionSortMetadata {
 impl CompletionSortMetadata {
     pub(crate) fn serialize(self) -> String {
         let source = match self.source {
-            CompletionSourceKind::User => "user",
-            CompletionSourceKind::Builtin => "builtin",
+            CompletionSourceKind::Global => "global",
+            CompletionSourceKind::Option => "option",
+            CompletionSourceKind::System => "system",
+            CompletionSourceKind::OtherSingleNameContext => "other-single-name-context",
+            CompletionSourceKind::MultiNameContext => "multi-name-context",
             CompletionSourceKind::Other => "other",
         };
         let frequency = self
@@ -908,8 +914,11 @@ impl CompletionSortMetadata {
             match key {
                 "source" => {
                     source = match value {
-                        "user" => CompletionSourceKind::User,
-                        "builtin" => CompletionSourceKind::Builtin,
+                        "global" | "user" => CompletionSourceKind::Global,
+                        "option" => CompletionSourceKind::Option,
+                        "system" | "builtin" => CompletionSourceKind::System,
+                        "other-single-name-context" => CompletionSourceKind::OtherSingleNameContext,
+                        "multi-name-context" => CompletionSourceKind::MultiNameContext,
                         _ => CompletionSourceKind::Other,
                     }
                 }
@@ -936,9 +945,12 @@ pub(crate) fn completion_sort_key(
             frequency: None,
         });
     let source_priority = match metadata.source {
-        CompletionSourceKind::User => 0,
-        CompletionSourceKind::Other => 1,
-        CompletionSourceKind::Builtin => 2,
+        CompletionSourceKind::Global => 0,
+        CompletionSourceKind::Option => 1,
+        CompletionSourceKind::System => 2,
+        CompletionSourceKind::OtherSingleNameContext => 3,
+        CompletionSourceKind::MultiNameContext => 4,
+        CompletionSourceKind::Other => 5,
     };
     let score =
         completion_score(&suggestion.value, short_prefix, metadata.frequency).unwrap_or(usize::MAX);
@@ -1025,7 +1037,7 @@ pub(crate) fn symbol_suggestions(
             let (description, style) = match candidate.kind {
                 CompletionKind::Symbol => (
                     symbol_completion_description(&details),
-                    if completion_source_kind(candidate) == CompletionSourceKind::Builtin {
+                    if completion_source_kind(candidate) == CompletionSourceKind::System {
                         styles.completion_symbol
                     } else {
                         styles.completion_user_symbol
@@ -1056,13 +1068,27 @@ pub(crate) fn symbol_suggestions(
 }
 
 pub(crate) fn completion_source_kind(candidate: &CompletionItem) -> CompletionSourceKind {
-    match candidate.kind {
-        CompletionKind::Context => CompletionSourceKind::User,
-        CompletionKind::Symbol if candidate.context.as_deref() == Some("System`") => {
-            CompletionSourceKind::Builtin
+    completion_context_source_kind(candidate.context.as_deref())
+}
+
+pub(crate) fn completion_context_source_kind(context: Option<&str>) -> CompletionSourceKind {
+    match context {
+        Some("Global`") => CompletionSourceKind::Global,
+        Some("System`") => CompletionSourceKind::System,
+        Some(context) if is_single_name_context(context) => {
+            CompletionSourceKind::OtherSingleNameContext
         }
-        CompletionKind::Symbol => CompletionSourceKind::User,
+        Some(_) => CompletionSourceKind::MultiNameContext,
+        None => CompletionSourceKind::Other,
     }
+}
+
+pub(crate) fn is_single_name_context(context: &str) -> bool {
+    let mut segments = context
+        .trim_end_matches('`')
+        .split('`')
+        .filter(|segment| !segment.is_empty());
+    segments.next().is_some() && segments.next().is_none()
 }
 
 pub(crate) fn symbol_completion_description(details: &CompletionItemDetails) -> String {
@@ -1102,7 +1128,13 @@ pub(crate) fn option_suggestions(
             value: candidate.clone(),
             description: Some(format!("option for {head}")),
             style: Some(styles.completion_option),
-            extra: None,
+            extra: Some(vec![
+                CompletionSortMetadata {
+                    source: CompletionSourceKind::Option,
+                    frequency: None,
+                }
+                .serialize(),
+            ]),
             span: Span { start, end },
             append_whitespace: false,
         })
@@ -1270,4 +1302,91 @@ fn prefix_plus_word_initials_matches(candidate: &str, pattern: &str) -> bool {
     }
 
     saw_initial && pattern_chars.next().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn symbol_in_context(context: &str) -> CompletionItem {
+        CompletionItem {
+            value: "Alpha".to_string(),
+            kind: CompletionKind::Symbol,
+            frequency: None,
+            context: Some(context.to_string()),
+        }
+    }
+
+    fn suggestion(value: &str, source: CompletionSourceKind) -> Suggestion {
+        Suggestion {
+            value: value.to_string(),
+            description: None,
+            style: None,
+            extra: Some(vec![
+                CompletionSortMetadata {
+                    source,
+                    frequency: None,
+                }
+                .serialize(),
+            ]),
+            span: Span { start: 0, end: 1 },
+            append_whitespace: false,
+        }
+    }
+
+    #[test]
+    fn classifies_symbol_contexts_for_completion_precedence() {
+        assert_eq!(
+            completion_source_kind(&symbol_in_context("Global`")),
+            CompletionSourceKind::Global
+        );
+        assert_eq!(
+            completion_source_kind(&symbol_in_context("System`")),
+            CompletionSourceKind::System
+        );
+        assert_eq!(
+            completion_source_kind(&symbol_in_context("DataPaclets`")),
+            CompletionSourceKind::OtherSingleNameContext
+        );
+        assert_eq!(
+            completion_source_kind(&symbol_in_context("Developer`PackedArrayDump`")),
+            CompletionSourceKind::MultiNameContext
+        );
+    }
+
+    #[test]
+    fn sorts_symbols_by_context_precedence_before_match_score() {
+        let mut suggestions = vec![
+            suggestion(
+                "AlphaFromMultiNameContext",
+                CompletionSourceKind::MultiNameContext,
+            ),
+            suggestion(
+                "AlphaFromSingleNameContext",
+                CompletionSourceKind::OtherSingleNameContext,
+            ),
+            suggestion("AlphaFromSystem", CompletionSourceKind::System),
+            suggestion("AlphaFromGlobal", CompletionSourceKind::Global),
+        ];
+
+        suggestions.sort_by(|left, right| {
+            completion_sort_key(left, "Alpha")
+                .cmp(&completion_sort_key(right, "Alpha"))
+                .then_with(|| left.value.cmp(&right.value))
+        });
+
+        let values = suggestions
+            .into_iter()
+            .map(|suggestion| suggestion.value)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            vec![
+                "AlphaFromGlobal",
+                "AlphaFromSystem",
+                "AlphaFromSingleNameContext",
+                "AlphaFromMultiNameContext",
+            ]
+        );
+    }
 }

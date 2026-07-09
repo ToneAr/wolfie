@@ -180,7 +180,7 @@ build_and_install_source() {
     log "Building $BINARY_NAME from source"
     (
         cd "$script_dir"
-        cargo build --release --locked
+        WOLFRAM_KERNEL="${WOLFRAM_KERNEL:-/nonexistent/WolframKernel}" cargo build --release --locked
     )
 
     install_binary "$script_dir/target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"

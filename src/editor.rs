@@ -39,8 +39,8 @@ impl Prompt for WolframPrompt {
 
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
         format!(
-            "Status: {}",       // | FE: {}",
-            self.kernel_status  //, self.frontend_status
+            "Status: {} | FE: {}",
+            self.kernel_status, self.frontend_status
         )
         .into()
     }
@@ -50,7 +50,8 @@ impl Prompt for WolframPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
-        "        ".into()
+        let width = self.input_prompt.chars().count();
+        format!("{}> ", " ".repeat(width.saturating_sub(2))).into()
     }
 
     fn render_prompt_history_search_indicator(
@@ -190,8 +191,8 @@ pub(crate) fn completion_edit_mode() -> Emacs {
         KeyModifiers::NONE,
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Enter,
             ReedlineEvent::Menu(COMPLETION_MENU.to_string()),
+            ReedlineEvent::MenuNext,
         ]),
     );
     keybindings.add_binding(
@@ -217,11 +218,7 @@ pub(crate) fn completion_edit_mode() -> Emacs {
             ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
         ]),
     );
-    keybindings.add_binding(
-        KeyModifiers::NONE,
-        KeyCode::BackTab,
-        ReedlineEvent::MenuPrevious,
-    );
+    keybindings.add_binding(KeyModifiers::NONE, KeyCode::BackTab, insert_tab_character());
 
     keybindings.add_binding(
         KeyModifiers::NONE,
@@ -239,7 +236,7 @@ pub(crate) fn completion_edit_mode() -> Emacs {
     keybindings.add_binding(
         KeyModifiers::SHIFT,
         KeyCode::BackTab,
-        ReedlineEvent::MenuPrevious,
+        insert_tab_character(),
     );
 
     for byte in b'a'..=b'z' {
@@ -300,6 +297,10 @@ fn insert_and_open_completion(ch: char) -> ReedlineEvent {
         ReedlineEvent::Edit(vec![EditCommand::InsertChar(ch)]),
         ReedlineEvent::Menu(COMPLETION_MENU.to_string()),
     ])
+}
+
+fn insert_tab_character() -> ReedlineEvent {
+    ReedlineEvent::Edit(vec![EditCommand::InsertChar('\t')])
 }
 
 fn insert_and_close_completion(ch: char) -> ReedlineEvent {
@@ -380,8 +381,7 @@ impl EditMode for HistoryPrimedEditMode {
             }
         }
 
-        let rebuilt =
-            ReedlineRawEvent::convert_from(raw).expect("re-wrapping a non-release event");
+        let rebuilt = ReedlineRawEvent::convert_from(raw).expect("re-wrapping a non-release event");
         self.inner.parse_event(rebuilt)
     }
 
