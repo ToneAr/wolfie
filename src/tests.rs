@@ -2,7 +2,11 @@ use crate::{
     commands::*, completion::*, editor::*, highlighter::*, theme::*, wl::*, wolfram_syntax::*,
 };
 use anyhow::Result;
-use reedline::{Completer, ValidationResult, Validator};
+use crossterm::event::{Event, KeyEvent};
+use reedline::{
+    Completer, EditCommand, EditMode, KeyCode, KeyModifiers, ReedlineEvent, ReedlineRawEvent,
+    ValidationResult, Validator,
+};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, atomic::AtomicU64},
@@ -199,6 +203,51 @@ fn validates_colon_commands_as_complete_input() {
         validator.validate(":help ["),
         ValidationResult::Complete
     ));
+}
+
+#[test]
+fn tab_key_opens_or_navigates_completion_without_submitting() {
+    let mut edit_mode = completion_edit_mode();
+    let event = raw_key(KeyCode::Tab, KeyModifiers::NONE);
+
+    assert_eq!(
+        edit_mode.parse_event(event),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ])
+    );
+}
+
+#[test]
+fn shift_enter_inserts_newline_without_submitting() {
+    let mut edit_mode = completion_edit_mode();
+    let event = raw_key(KeyCode::Enter, KeyModifiers::SHIFT);
+
+    assert_eq!(
+        edit_mode.parse_event(event),
+        ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Esc,
+            ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+        ])
+    );
+}
+
+#[test]
+fn shift_tab_inserts_literal_tab_character() {
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        let mut edit_mode = completion_edit_mode();
+        let event = raw_key(KeyCode::BackTab, modifiers);
+
+        assert_eq!(
+            edit_mode.parse_event(event),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('\t')])
+        );
+    }
+}
+
+fn raw_key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
+    ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
 }
 
 #[test]

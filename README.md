@@ -1,4 +1,19 @@
 # Wolfram CLI
+
+## Installation
+
+Linux/macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfram-cli/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ToneAr/wolfram-cli/main/install.ps1 | iex
+```
+
 ## Usage
 
 Start the interactive REPL. This uses the native WSTP backend and keeps a kernel session alive for REPL state:

@@ -65,6 +65,7 @@ pub(crate) struct WstpKernelClient {
     process: Child,
     link: Option<Link>,
     input_prompt: Option<String>,
+    initial_prompt_pending: bool,
 }
 
 impl WstpKernelClient {
@@ -75,7 +76,7 @@ impl WstpKernelClient {
             .map_err(|err| anyhow!("failed to create WSTP listener: {err:?}"))?;
         let link_name = link.link_name();
         let spawn_start = Instant::now();
-        let mut process = Command::new(path)
+        let process = Command::new(path)
             .arg("-wstp")
             .arg("-linkprotocol")
             .arg("SharedMemory")
@@ -94,19 +95,13 @@ impl WstpKernelClient {
             .map_err(|err| anyhow!("failed to activate WSTP link: {err:?}"))?;
         profile_duration("wstp.launch.activate", activate_start.elapsed(), "");
 
-        let prompt_start = Instant::now();
-        let input_prompt = read_initial_input_name_packet(&mut link, &mut process)?;
-        profile_duration(
-            "wstp.launch.initial_prompt",
-            prompt_start.elapsed(),
-            input_prompt.as_str(),
-        );
         profile_duration("wstp.launch.total", start.elapsed(), "");
 
         Ok(Self {
             process,
             link: Some(link),
-            input_prompt: Some(input_prompt),
+            input_prompt: None,
+            initial_prompt_pending: true,
         })
     }
 
@@ -116,8 +111,10 @@ impl WstpKernelClient {
         theme: Option<&ThemeHandle>,
         input_handler: Option<&mut KernelInputHandler<'_>>,
     ) -> Result<()> {
+        let previous_input_prompt = self.input_prompt.clone();
         let packets = self.evaluate_input_packets(input, input_handler)?;
-        let input_prompt = last_input_name(&packets);
+        let input_prompt =
+            next_input_prompt_after_evaluation(previous_input_prompt.as_deref(), &packets);
         render_packets(&packets, theme)?;
         if let Some(input_prompt) = input_prompt {
             self.input_prompt = Some(input_prompt);
@@ -127,6 +124,24 @@ impl WstpKernelClient {
 
     pub(crate) fn input_prompt(&self) -> Option<&str> {
         self.input_prompt.as_deref()
+    }
+
+    fn ensure_initial_prompt_read(&mut self) -> Result<()> {
+        if !self.initial_prompt_pending {
+            return Ok(());
+        }
+
+        let start = Instant::now();
+        let link = self.link.as_mut().context("WSTP link is closed")?;
+        let input_prompt = read_initial_input_name_packet(link, &mut self.process)?;
+        profile_duration(
+            "wstp.initial_prompt",
+            start.elapsed(),
+            input_prompt.as_str(),
+        );
+        self.input_prompt = Some(input_prompt);
+        self.initial_prompt_pending = false;
+        Ok(())
     }
 
     /// Evaluates `input` and returns its textual result. Queries built from
@@ -147,6 +162,7 @@ impl WstpKernelClient {
         input: &str,
         input_handler: Option<&mut KernelInputHandler<'_>>,
     ) -> Result<Vec<KernelPacket>> {
+        self.ensure_initial_prompt_read()?;
         let start = Instant::now();
         let link = self.link.as_mut().context("WSTP link is closed")?;
         let input = wstp_user_input_text(input);
@@ -170,6 +186,7 @@ impl WstpKernelClient {
     }
 
     fn evaluate_packet_to_string(&mut self, expr: &Expr) -> Result<String> {
+        self.ensure_initial_prompt_read()?;
         let start = Instant::now();
         let link = self.link.as_mut().context("WSTP link is closed")?;
         link.put_eval_packet(expr)
@@ -456,11 +473,50 @@ fn input_request_prompt(packets: &[KernelPacket]) -> String {
         .unwrap_or_default()
 }
 
+fn next_input_prompt_after_evaluation(
+    previous_prompt: Option<&str>,
+    packets: &[KernelPacket],
+) -> Option<String> {
+    last_input_name(packets)
+        .or_else(|| last_output_name(packets).and_then(next_input_prompt_from_output_name))
+        .or_else(|| previous_prompt.and_then(increment_input_prompt))
+}
+
 fn last_input_name(packets: &[KernelPacket]) -> Option<String> {
     packets.iter().rev().find_map(|packet| match packet {
-        KernelPacket::InputName(text) => Some(text.clone()),
+        KernelPacket::InputName(text) if !text.trim().is_empty() => Some(text.clone()),
         _ => None,
     })
+}
+
+fn last_output_name(packets: &[KernelPacket]) -> Option<&str> {
+    packets.iter().rev().find_map(|packet| match packet {
+        KernelPacket::OutputName(text) if !text.trim().is_empty() => Some(text.as_str()),
+        _ => None,
+    })
+}
+
+fn next_input_prompt_from_output_name(output_name: &str) -> Option<String> {
+    let number = prompt_number(output_name, "Out[", "]")?;
+    Some(format!("In[{}]:=", number + 1))
+}
+
+fn increment_input_prompt(input_prompt: &str) -> Option<String> {
+    let start = input_prompt.find("In[")? + "In[".len();
+    let end = input_prompt[start..].find("]:=")? + start;
+    let number = input_prompt[start..end].parse::<u64>().ok()?;
+
+    let mut next = String::new();
+    next.push_str(&input_prompt[..start]);
+    next.push_str(&(number + 1).to_string());
+    next.push_str(&input_prompt[end..]);
+    Some(next)
+}
+
+fn prompt_number(prompt: &str, number_prefix: &str, number_suffix: &str) -> Option<u64> {
+    let start = prompt.find(number_prefix)? + number_prefix.len();
+    let end = prompt[start..].find(number_suffix)? + start;
+    prompt[start..end].parse::<u64>().ok()
 }
 
 fn packet_name(packet_id: i32) -> &'static str {
@@ -680,7 +736,7 @@ fn wrap_to_string_query(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_to_string_query;
+    use super::{KernelPacket, next_input_prompt_after_evaluation, wrap_to_string_query};
 
     #[test]
     fn wrap_to_string_query_returns_string_results_unconverted() {
@@ -688,5 +744,41 @@ mod tests {
         assert!(wrapped.contains("StringQ[wolframCliQueryResult$]"));
         assert!(wrapped.contains("ToString[wolframCliQueryResult$, InputForm]"));
         assert!(wrapped.contains("StringJoin[\"a\", \"b\"]"));
+    }
+
+    #[test]
+    fn next_input_prompt_uses_non_empty_input_name_packet() {
+        let packets = vec![
+            KernelPacket::OutputName("Out[7]=".to_string()),
+            KernelPacket::InputName("In[8]:=".to_string()),
+        ];
+
+        assert_eq!(
+            next_input_prompt_after_evaluation(Some("In[7]:="), &packets),
+            Some("In[8]:=".to_string())
+        );
+    }
+
+    #[test]
+    fn next_input_prompt_falls_back_to_output_name_when_input_name_is_empty() {
+        let packets = vec![
+            KernelPacket::OutputName("Out[7]=".to_string()),
+            KernelPacket::InputName(String::new()),
+        ];
+
+        assert_eq!(
+            next_input_prompt_after_evaluation(Some("In[7]:="), &packets),
+            Some("In[8]:=".to_string())
+        );
+    }
+
+    #[test]
+    fn next_input_prompt_falls_back_to_previous_input_prompt() {
+        let packets = vec![KernelPacket::Text("side effect only\n".to_string())];
+
+        assert_eq!(
+            next_input_prompt_after_evaluation(Some("In[7]:="), &packets),
+            Some("In[8]:=".to_string())
+        );
     }
 }

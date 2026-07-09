@@ -319,12 +319,11 @@ pub(crate) fn kernel_may_be_slow_to_respond(status: KernelStatus) -> bool {
 }
 
 /// Launches the WSTP kernel's first real evaluation in the background as
-/// soon as the session starts, instead of leaving it for the user's first
-/// submitted input. The kernel process itself is already running by this
-/// point (`KernelClient::new` spawned it); what remains is the slow
-/// first-time initialization (loading contexts, standard packages) that the
-/// kernel only performs once it receives something to evaluate. Doing that
-/// here overlaps it with the time the user spends reading the banner and
+/// soon as the REPL starts, instead of leaving it for the user's first
+/// submitted input. The kernel process and link are already created by this
+/// point (`KernelClient::new` did that cheaply); what remains is the slow
+/// first prompt/readiness handshake plus first-time evaluation setup. Doing
+/// that here overlaps it with the time the user spends reading the banner and
 /// typing their first command, instead of after they press Enter.
 pub(crate) fn spawn_kernel_warmup(kernel: SharedKernel) {
     std::thread::spawn(move || {

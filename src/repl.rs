@@ -21,8 +21,8 @@ use crate::{
     frontend::{FrontEndClient, frontend_status},
     highlighter::WolframHighlighter,
     kernel::{
-        KernelClient, SharedKernel, kernel_input_prompt, kernel_may_be_slow_to_respond,
-        kernel_status, lock_kernel, spawn_kernel_warmup,
+        KernelClient, kernel_input_prompt, kernel_may_be_slow_to_respond, kernel_status,
+        lock_kernel, spawn_kernel_warmup,
     },
     native_wstp::KernelInputRequest,
     theme::{Theme, ThemeHandle},
@@ -40,7 +40,7 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
         None
     };
     spawn_kernel_warmup(kernel.clone());
-    print_welcome(&kernel, frontend.as_ref())?;
+    print_welcome();
     let theme = ThemeHandle::new(Theme::Dark);
     let completion_source = CompletionSource::new(
         kernel.clone(),
@@ -70,7 +70,7 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
         ));
     loop {
         let prompt = WolframPrompt {
-            input_prompt: kernel_input_prompt(&kernel)?.unwrap_or_default(),
+            input_prompt: kernel_input_prompt(&kernel)?.unwrap_or_else(|| "In[1]:= ".to_string()),
             kernel_status: kernel_status(&kernel)?,
             frontend_status: frontend_status(frontend.as_ref())?,
         };
@@ -117,16 +117,10 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_welcome(
-    kernel: &SharedKernel,
-    frontend: Option<&Arc<Mutex<FrontEndClient>>>,
-) -> Result<()> {
+fn print_welcome() {
     println!("Wolfram CLI");
-    // println!("{}", kernel_status(kernel)?);
-    // println!("{}", frontend_status(frontend)?);
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
-    Ok(())
 }
 
 fn read_kernel_input(
@@ -162,7 +156,7 @@ impl Prompt for KernelInputPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
-        "        ".into()
+        " ".repeat(self.text.chars().count()).into()
     }
 
     fn render_prompt_history_search_indicator(

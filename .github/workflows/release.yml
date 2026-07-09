@@ -112,19 +112,32 @@ jobs:
           hdiutil imageinfo "$dmg"
 
           mkdir -p "$mount_dir"
-          hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -readonly -noverify
+          if ! hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -readonly -noverify; then
+            echo "hdiutil attach returned a non-zero exit code; checking whether the image mounted anyway."
+            mount | grep -F "$mount_dir" || true
+            if [ -z "$(find "$mount_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+              echo "::error::hdiutil attach failed and $mount_dir is empty."
+              exit 1
+            fi
+            echo "DMG is mounted at $mount_dir despite hdiutil's non-zero exit code; continuing."
+          fi
           trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
 
-          wstp_dir=$(find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/${{ matrix.systemid }}/CompilerAdditions" -type d -print -quit)
+          wstp_dir=$(find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/${{ matrix.systemid }}/CompilerAdditions" -type d -print -quit 2>/dev/null || true)
           if [ -z "$wstp_dir" ]; then
             echo "::error::Could not find ${{ matrix.systemid }} WSTP CompilerAdditions in the Wolfram Engine DMG."
-            find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d -print || true
+            echo "DeveloperKit directories found:"
+            find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d -print 2>/dev/null || true
             exit 1
           fi
 
           mkdir -p "$wstp_out"
           cp -R "$wstp_dir"/. "$wstp_out"/
-          test -f "$wstp_out/libWSTP64i4.a"
+          if [ ! -f "$wstp_out/libWSTPi4.a" ]; then
+            echo "::error::No libWSTPi4.a found after copying ${{ matrix.systemid }} WSTP CompilerAdditions from $wstp_dir."
+            find "$wstp_out" -maxdepth 2 -type f -print || true
+            exit 1
+          fi
           echo "WSTP_COMPILER_ADDITIONS_DIRECTORY=$wstp_out" >> "$GITHUB_ENV"
           echo "Using WSTP CompilerAdditions: $wstp_out"
 
