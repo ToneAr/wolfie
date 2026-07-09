@@ -6,10 +6,10 @@ Module[{promptedInputString, promptedInput},
   );
   promptedInput[prompt_] := ToExpression[promptedInputString[prompt]];
   ToString[
-    __INPUT_EXPR__ /. {
+    __INPUT_EXPR__ // Replace[{
       HoldPattern[InputString[prompt_]] :> promptedInputString[prompt],
       HoldPattern[Input[prompt_]] :> promptedInput[prompt]
-    },
+    }],
     InputForm
   ]
 ]

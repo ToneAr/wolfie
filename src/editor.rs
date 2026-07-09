@@ -1,10 +1,20 @@
-use std::{env, path::PathBuf};
+use std::{
+    cell::Cell,
+    env,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use anyhow::{Context, Result};
+use crossterm::event::{Event, KeyEvent};
 use reedline::{
-    Completer, EditCommand, Editor, Emacs, IdeMenu, KeyCode, KeyModifiers, Menu, MenuBuilder,
-    MenuEvent, Painter, Prompt, PromptEditMode, PromptHistorySearch, ReedlineEvent, Suggestion,
-    ValidationResult, Validator, default_emacs_keybindings,
+    Completer, EditCommand, EditMode, Editor, Emacs, IdeMenu, KeyCode, KeyModifiers, ListMenu,
+    Menu, MenuBuilder, MenuEvent, Painter, Prompt, PromptEditMode, PromptHistorySearch,
+    ReedlineEvent, ReedlineRawEvent, Suggestion, ValidationResult, Validator,
+    default_emacs_keybindings,
 };
 
 use crate::{
@@ -14,6 +24,7 @@ use crate::{
 };
 
 const COMPLETION_MENU: &str = "completion_menu";
+pub(crate) const HISTORY_MENU: &str = "history_menu";
 
 pub(crate) struct WolframPrompt {
     pub(crate) input_prompt: String,
@@ -28,8 +39,8 @@ impl Prompt for WolframPrompt {
 
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
         format!(
-            "Status: {}",// | FE: {}",
-            self.kernel_status//, self.frontend_status
+            "Status: {}",       // | FE: {}",
+            self.kernel_status  //, self.frontend_status
         )
         .into()
     }
@@ -58,6 +69,13 @@ pub(crate) fn completion_menu() -> StringAwareIdeMenu {
             .with_max_completion_height(6)
             .with_max_description_height(6),
     )
+}
+
+pub(crate) fn history_menu() -> ListMenu {
+    ListMenu::default()
+        .with_name(HISTORY_MENU)
+        .with_page_size(10)
+        .with_max_entry_lines(1)
 }
 
 pub(crate) struct StringAwareIdeMenu {
@@ -182,6 +200,11 @@ pub(crate) fn completion_edit_mode() -> Emacs {
         ReedlineEvent::Menu(COMPLETION_MENU.to_string()),
     );
     keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('r'),
+        ReedlineEvent::Menu(HISTORY_MENU.to_string()),
+    );
+    keybindings.add_binding(
         KeyModifiers::NONE,
         KeyCode::Enter,
         ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Enter]),
@@ -284,6 +307,149 @@ fn insert_and_close_completion(ch: char) -> ReedlineEvent {
         ReedlineEvent::Edit(vec![EditCommand::InsertChar(ch)]),
         ReedlineEvent::Esc,
     ])
+}
+
+/// Handle used to arm the history menu so it opens on the next keystroke.
+///
+/// Reedline only learns what was typed (e.g. `:history`) after `Enter` ends
+/// that `read_line` call, and it has no API to pop a menu open before any
+/// further input arrives on the *next* prompt. Arming this trigger makes the
+/// very next key event open the history menu; that keystroke is consumed to
+/// open it rather than also being applied, since bundling activation with an
+/// edit in the same tick corrupts `ListMenu`'s buffer-diff filter baseline.
+#[derive(Clone)]
+pub(crate) struct HistoryTrigger(Arc<AtomicBool>);
+
+impl HistoryTrigger {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub(crate) fn arm(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn take(&self) -> bool {
+        self.0.swap(false, Ordering::Relaxed)
+    }
+}
+
+struct HistoryPrimedEditMode {
+    inner: Emacs,
+    trigger: HistoryTrigger,
+    /// True while the history menu is open. While active, plain character
+    /// keys bypass `inner`'s Wolfram-completion bindings (which insert a
+    /// char and then close whatever menu is open, e.g. on operators like
+    /// `+`) and instead just insert normally, so typing filters the history
+    /// list instead of dismissing it.
+    history_active: Cell<bool>,
+}
+
+impl EditMode for HistoryPrimedEditMode {
+    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
+        let raw = event.into();
+
+        if self.trigger.take() {
+            self.history_active.set(true);
+            return ReedlineEvent::Menu(HISTORY_MENU.to_string());
+        }
+        if is_history_open_key(&raw) {
+            self.history_active.set(true);
+        }
+
+        if self.history_active.get() {
+            // Bypass `inner`'s Wolfram-completion bindings entirely while the
+            // history menu is open: those bindings hard-code `Enter` to
+            // `Multiple([Esc, Enter])` (so completion suggestions never
+            // hijack submission) and close-on-punctuation for symbol
+            // completion, neither of which apply to browsing history.
+            // Reedline's own engine special-cases plain `Enter`/`Esc` when a
+            // menu is active (accept-selection-without-submitting, and
+            // cancel, respectively), so returning them undecorated here
+            // restores normal menu navigation.
+            if is_history_accept_key(&raw) {
+                self.history_active.set(false);
+                return ReedlineEvent::Enter;
+            }
+            if is_history_cancel_key(&raw) {
+                self.history_active.set(false);
+                return ReedlineEvent::Esc;
+            }
+            if let Some(plain_insert) = plain_char_insert(&raw) {
+                return plain_insert;
+            }
+        }
+
+        let rebuilt =
+            ReedlineRawEvent::convert_from(raw).expect("re-wrapping a non-release event");
+        self.inner.parse_event(rebuilt)
+    }
+
+    fn edit_mode(&self) -> PromptEditMode {
+        self.inner.edit_mode()
+    }
+}
+
+fn is_history_open_key(raw: &Event) -> bool {
+    matches!(
+        raw,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('r'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        })
+    )
+}
+
+fn is_history_accept_key(raw: &Event) -> bool {
+    matches!(
+        raw,
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            ..
+        })
+    )
+}
+
+fn is_history_cancel_key(raw: &Event) -> bool {
+    match raw {
+        Event::Key(KeyEvent {
+            code: KeyCode::Esc, ..
+        }) => true,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('c') | KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+fn plain_char_insert(raw: &Event) -> Option<ReedlineEvent> {
+    match raw {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }) => Some(ReedlineEvent::Edit(vec![EditCommand::InsertChar(*c)])),
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::SHIFT,
+            ..
+        }) => Some(ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+            c.to_ascii_uppercase(),
+        )])),
+        _ => None,
+    }
+}
+
+pub(crate) fn history_primed_edit_mode(inner: Emacs, trigger: HistoryTrigger) -> Box<dyn EditMode> {
+    Box::new(HistoryPrimedEditMode {
+        inner,
+        trigger,
+        history_active: Cell::new(false),
+    })
 }
 
 pub(crate) struct WolframValidator;

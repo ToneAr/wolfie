@@ -1243,10 +1243,11 @@ dependencies = [
 
 [[package]]
 name = "wolfram-cli"
-version = "0.3.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
+ "crossterm",
  "nu-ansi-term",
  "reedline",
  "wolfram-app-discovery",

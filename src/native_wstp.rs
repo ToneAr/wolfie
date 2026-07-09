@@ -10,7 +10,6 @@ use wolfram_expr::{Expr, ExprKind, Symbol};
 use wstp::{Link, Protocol, sys};
 
 use crate::{
-    highlighter::print_highlighted,
     kernel::{KernelExit, kernel_path},
     profiler::{profile_duration, profile_event},
     theme::ThemeHandle,
@@ -130,14 +129,16 @@ impl WstpKernelClient {
         self.input_prompt.as_deref()
     }
 
+    /// Evaluates `input` and returns its textual result. Queries built from
+    /// `StringRiffle`/`StringJoin` (as completion queries are) already
+    /// evaluate to a `String`; re-wrapping that in `ToString[.., InputForm]`
+    /// would double-encode it (quoting the string and escaping its tabs and
+    /// newlines as literal `\t`/`\n` text), which callers that split on real
+    /// tab/newline bytes then fail to parse. Only non-string results go
+    /// through `ToString[.., InputForm]`.
     pub(crate) fn evaluate_to_string(&mut self, input: &str) -> Result<String> {
-        let expr = call(
-            "System`ToString",
-            vec![
-                call("System`ToExpression", vec![Expr::string(input)]),
-                symbol("System`InputForm"),
-            ],
-        );
+        let wrapped = wrap_to_string_query(input);
+        let expr = call("System`ToExpression", vec![Expr::string(&wrapped)]);
         self.evaluate_packet_to_string(&expr)
     }
 
@@ -231,19 +232,12 @@ impl Drop for WstpKernelClient {
 }
 
 fn wstp_user_input_text(input: &str) -> String {
-    let input = if input.contains("Input[") || input.contains("InputString[") {
-        WSTP_EVALUATE_USER_INPUT_WL.replace(
-            "WOLFRAMCLIINPUTPLACEHOLDER",
-            &wolfram_string_literal(input),
-        )
+    if input.contains("Input[") || input.contains("InputString[") {
+        WSTP_EVALUATE_USER_INPUT_WL
+            .replace("WOLFRAMCLIINPUTPLACEHOLDER", &wolfram_string_literal(input))
     } else {
         input.to_owned()
-    };
-    input_form_string_evaluation(&input)
-}
-
-fn input_form_string_evaluation(input: &str) -> String {
-    format!("ToString[{input}, InputForm]")
+    }
 }
 
 fn put_enter_text_packet(link: &mut Link, input: &str) -> Result<()> {
@@ -289,7 +283,8 @@ fn read_packets_until_return(
         let packet = read_packet_payload(link, packet_id)?;
         trace_packet(operation, &packet);
         let terminal = packet_is_terminal(&packet);
-        let next_prompt_after_result = read_next_input_name && matches!(packet, KernelPacket::InputName(_));
+        let next_prompt_after_result =
+            read_next_input_name && matches!(packet, KernelPacket::InputName(_));
         let input_request = match packet {
             KernelPacket::Input => Some(KernelInputRequest {
                 kind: KernelInputKind::Expression,
@@ -307,7 +302,9 @@ fn read_packets_until_return(
         if let Some(request) = input_request {
             let response = match input_handler.as_deref_mut() {
                 Some(handler) => handler(&request)?,
-                None => bail!("kernel requested input during {operation}, but no input handler is available"),
+                None => bail!(
+                    "kernel requested input during {operation}, but no input handler is available"
+                ),
             };
             let response = response.context("kernel input was cancelled")?;
             send_input_response(link, &request, &response)?;
@@ -356,8 +353,9 @@ fn send_input_response(
                 .map_err(|err| anyhow!("failed to send WSTP InputPacket response: {err:?}"))?;
         }
         KernelInputKind::String => {
-            link.put_str(response)
-                .map_err(|err| anyhow!("failed to send WSTP InputStringPacket response: {err:?}"))?;
+            link.put_str(response).map_err(|err| {
+                anyhow!("failed to send WSTP InputStringPacket response: {err:?}")
+            })?;
             link.end_packet().map_err(|err| {
                 anyhow!("failed to finish WSTP InputStringPacket response packet: {err:?}")
             })?;
@@ -384,7 +382,9 @@ fn read_packet_payload(link: &mut Link, packet_id: i32) -> Result<KernelPacket> 
         sys::DISPLAYENDPKT => KernelPacket::DisplayEnd,
         sys::DISPLAYPKT => KernelPacket::Display,
         sys::ENDDLGPKT => KernelPacket::EndDialog(read_i32(link, "EndDialogPacket")?),
-        sys::ENTEREXPRPKT => KernelPacket::EnterExpression(read_expr(link, "EnterExpressionPacket")?),
+        sys::ENTEREXPRPKT => {
+            KernelPacket::EnterExpression(read_expr(link, "EnterExpressionPacket")?)
+        }
         sys::ENTERTEXTPKT => KernelPacket::EnterText(read_string(link, "EnterTextPacket")?),
         sys::EVALUATEPKT => KernelPacket::Evaluate(read_expr(link, "EvaluatePacket")?),
         sys::INPUTNAMEPKT => KernelPacket::InputName(read_string(link, "InputNamePacket")?),
@@ -400,7 +400,9 @@ fn read_packet_payload(link: &mut Link, packet_id: i32) -> Result<KernelPacket> 
         },
         sys::OUTPUTNAMEPKT => KernelPacket::OutputName(read_string(link, "OutputNamePacket")?),
         sys::RESUMEPKT => KernelPacket::Resume,
-        sys::RETURNEXPRPKT => KernelPacket::ReturnExpression(read_expr(link, "ReturnExpressionPacket")?),
+        sys::RETURNEXPRPKT => {
+            KernelPacket::ReturnExpression(read_expr(link, "ReturnExpressionPacket")?)
+        }
         sys::RETURNPKT => KernelPacket::Return(read_expr(link, "ReturnPacket")?),
         sys::RETURNTEXTPKT => KernelPacket::ReturnText(read_string(link, "ReturnTextPacket")?),
         sys::SUSPENDPKT => KernelPacket::Suspend,
@@ -513,14 +515,19 @@ fn packet_output_bytes(packets: &[KernelPacket]) -> usize {
             | KernelPacket::ReturnText(text)
             | KernelPacket::InputName(text)
             | KernelPacket::OutputName(text) => text.len(),
-            KernelPacket::Return(expr) | KernelPacket::ReturnExpression(expr) => expr.to_string().len(),
+            KernelPacket::Return(expr) | KernelPacket::ReturnExpression(expr) => {
+                expr.to_string().len()
+            }
             _ => 0,
         })
         .sum()
 }
 
 fn trace_packet(operation: &str, packet: &KernelPacket) {
-    profile_event(format!("wstp.packet\t{operation}\t{}", packet_summary(packet)));
+    profile_event(format!(
+        "wstp.packet\t{operation}\t{}",
+        packet_summary(packet)
+    ));
 }
 
 fn packet_summary(packet: &KernelPacket) -> String {
@@ -579,7 +586,7 @@ fn render_packets(packets: &[KernelPacket], theme: Option<&ThemeHandle>) -> Resu
                     print_kernel_text("\n")?;
                     text_without_trailing_newline = false;
                 }
-                let text = return_expression_text(expr);
+                let text = expr_string_value(expr).unwrap_or_else(|| expr.to_string());
                 render_return_text(&text, output_name.take(), theme)?;
             }
             KernelPacket::ReturnText(text) => {
@@ -629,10 +636,6 @@ fn render_packets(packets: &[KernelPacket], theme: Option<&ThemeHandle>) -> Resu
     Ok(())
 }
 
-fn return_expression_text(expr: &Expr) -> String {
-    expr.to_string()
-}
-
 fn text_is_input_prompt(packets: &[KernelPacket], index: usize) -> bool {
     matches!(
         packets.get(index + 1),
@@ -643,9 +646,9 @@ fn text_is_input_prompt(packets: &[KernelPacket], index: usize) -> bool {
 fn render_return_text(
     text: &str,
     output_name: Option<&str>,
-    theme: Option<&ThemeHandle>,
+    _theme: Option<&ThemeHandle>,
 ) -> Result<()> {
-    if return_text_is_suppressed(text) {
+    if text.is_empty() {
         return Ok(());
     }
 
@@ -653,16 +656,8 @@ fn render_return_text(
         print_kernel_text(output_name)?;
     }
 
-    if let Some(theme) = theme {
-        print_highlighted(text, theme.current());
-    } else {
-        println!("{text}");
-    }
+    println!("{text}");
     Ok(())
-}
-
-fn return_text_is_suppressed(text: &str) -> bool {
-    text.is_empty() || text == "Null"
 }
 
 fn symbol(name: &str) -> Expr {
@@ -673,27 +668,25 @@ fn call(head: &str, args: Vec<Expr>) -> Expr {
     Expr::normal(symbol(head), args)
 }
 
+/// Wraps `input` so a `String` result is returned as-is, and anything else
+/// is rendered via `ToString[.., InputForm]`. See `evaluate_to_string`.
+fn wrap_to_string_query(input: &str) -> String {
+    format!(
+        "Module[{{wolframCliQueryResult$ = ({input})}}, \
+         If[StringQ[wolframCliQueryResult$], wolframCliQueryResult$, \
+         ToString[wolframCliQueryResult$, InputForm]]]"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::wrap_to_string_query;
 
     #[test]
-    fn return_expression_text_preserves_string_quotes() {
-        assert_eq!(return_expression_text(&Expr::string("abc")), "\"abc\"");
-    }
-
-    #[test]
-    fn user_input_is_evaluated_as_input_form_string() {
-        assert_eq!(
-            wstp_user_input_text("\"abc\""),
-            "ToString[\"abc\", InputForm]"
-        );
-    }
-
-    #[test]
-    fn null_return_text_is_suppressed() {
-        assert!(return_text_is_suppressed(""));
-        assert!(return_text_is_suppressed("Null"));
-        assert!(!return_text_is_suppressed("\"Null\""));
+    fn wrap_to_string_query_returns_string_results_unconverted() {
+        let wrapped = wrap_to_string_query("StringJoin[\"a\", \"b\"]");
+        assert!(wrapped.contains("StringQ[wolframCliQueryResult$]"));
+        assert!(wrapped.contains("ToString[wolframCliQueryResult$, InputForm]"));
+        assert!(wrapped.contains("StringJoin[\"a\", \"b\"]"));
     }
 }

@@ -1,4 +1,6 @@
-use crate::{commands::*, completion::*, editor::*, theme::*, wl::*, wolfram_syntax::*};
+use crate::{
+    commands::*, completion::*, editor::*, highlighter::*, theme::*, wl::*, wolfram_syntax::*,
+};
 use anyhow::Result;
 use reedline::{Completer, ValidationResult, Validator};
 use std::{
@@ -108,9 +110,10 @@ fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     assert!(compact_query.contains("Names[StringJoin[\"*`\",p,\"*\"]]"));
     assert!(compact_query.contains("StringJoin[p,\"*\"]"));
     assert!(compact_query.contains("DeleteDuplicates[Join["));
-    assert!(query.contains("$Context"));
-    assert!(query.contains("$ContextPath"));
     assert!(query.contains("Contexts[]"));
+    assert!(query.contains("matchingContexts"));
+    assert!(query.contains("StringStartsQ[#, p]"));
+    assert!(query.contains("isPrivateContext"));
     assert!(query.contains("contextOf[name_]"));
     assert!(!query.contains("ToExpression"));
     assert!(!query.contains("WolframLanguageData"));
@@ -118,6 +121,14 @@ fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     // symbols can match a short prefix); this query must stay name+context
     // only so it stays fast, and fetch usage separately in small batches.
     assert!(!query.contains("MessageName"));
+}
+
+#[test]
+fn symbol_completion_reuses_broader_query_prefixes() {
+    assert_eq!(symbol_query_prefix("M"), "M");
+    assert_eq!(symbol_query_prefix("MyC"), "My");
+    assert_eq!(symbol_query_prefix("MyContext`"), "MyContext`");
+    assert_eq!(symbol_query_prefix("MyContext`foo"), "MyContext`");
 }
 
 #[test]
@@ -217,6 +228,11 @@ fn parses_repl_commands() {
         ReplCommand::Theme(ThemeCommand::Set(Theme::Plain))
     );
     assert_eq!(parse_repl_command(":q").unwrap(), ReplCommand::Quit);
+    assert_eq!(
+        parse_repl_command(":history").unwrap(),
+        ReplCommand::History
+    );
+    assert_eq!(parse_repl_command(":hist").unwrap(), ReplCommand::History);
 }
 
 #[test]
@@ -225,6 +241,7 @@ fn rejects_unknown_or_malformed_repl_commands() {
     assert!(parse_repl_command(":clear now").is_err());
     assert!(parse_repl_command(":theme neon").is_err());
     assert!(parse_repl_command(":quit now").is_err());
+    assert!(parse_repl_command(":history now").is_err());
 }
 
 #[test]
@@ -463,6 +480,47 @@ fn reattaches_context_when_names_returns_short_symbol() {
 }
 
 #[test]
+fn completion_menu_colors_user_symbols_differently_from_builtins() {
+    let source = CompletionSource::with_backend(
+        Arc::new(FakeBackend::empty()),
+        Arc::new(AtomicU64::new(0)),
+        test_user_symbols(),
+    );
+    let builtin = CompletionItem {
+        value: "Plot".to_string(),
+        kind: CompletionKind::Symbol,
+        frequency: None,
+        context: Some("System`".to_string()),
+    };
+    let user_defined = CompletionItem {
+        value: "myVar".to_string(),
+        kind: CompletionKind::Symbol,
+        frequency: None,
+        context: None,
+    };
+
+    let suggestions =
+        symbol_suggestions(&[builtin, user_defined], "", 0, 0, &source, test_styles());
+
+    let builtin_style = suggestions
+        .iter()
+        .find(|s| s.value == "Plot")
+        .unwrap()
+        .style
+        .unwrap();
+    let user_style = suggestions
+        .iter()
+        .find(|s| s.value == "myVar")
+        .unwrap()
+        .style
+        .unwrap();
+
+    assert_eq!(builtin_style, test_styles().completion_symbol);
+    assert_eq!(user_style, test_styles().completion_user_symbol);
+    assert_ne!(builtin_style, user_style);
+}
+
+#[test]
 fn fuzzy_matches_completion_candidates() {
     assert!(fuzzy_matches("PlotRange", "PlR"));
     assert!(fuzzy_matches("PlotRange", "plotr"));
@@ -577,6 +635,88 @@ fn local_beginpackage_contexts_complete_immediately() {
     assert_eq!(
         suggestions[0].description.as_deref(),
         Some("context\nContext: MyContext`")
+    );
+}
+
+#[test]
+fn kernel_contexts_complete_for_unqualified_prefixes() {
+    let backend = FakeBackend {
+        symbols: HashMap::from([(
+            "My".to_string(),
+            vec![CompletionItem {
+                value: "MyContext`".to_string(),
+                kind: CompletionKind::Context,
+                frequency: None,
+                context: Some("MyContext`".to_string()),
+            }],
+        )]),
+        details: HashMap::new(),
+        delay: Duration::ZERO,
+        details_delay: Duration::ZERO,
+    };
+    let source = CompletionSource::with_backend(
+        Arc::new(backend),
+        Arc::new(AtomicU64::new(0)),
+        test_user_symbols(),
+    );
+    let mut completer = WolframCompleter::new(source, ThemeHandle::new(Theme::Dark));
+
+    let _ = completer.complete("MyC", 3);
+    wait_until(|| {
+        completer
+            .source
+            .symbols_for_prefix("MyC")
+            .iter()
+            .any(|item| item.value == "MyContext`")
+    });
+
+    let suggestions = completer.complete("MyC", 3);
+
+    assert!(
+        suggestions
+            .iter()
+            .any(|suggestion| suggestion.value == "MyContext`")
+    );
+}
+
+#[test]
+fn kernel_symbols_inside_contexts_complete_after_context_prefix() {
+    let backend = FakeBackend {
+        symbols: HashMap::from([(
+            "MyContext`".to_string(),
+            vec![CompletionItem {
+                value: "foo".to_string(),
+                kind: CompletionKind::Symbol,
+                frequency: None,
+                context: Some("MyContext`".to_string()),
+            }],
+        )]),
+        details: HashMap::new(),
+        delay: Duration::ZERO,
+        details_delay: Duration::ZERO,
+    };
+    let source = CompletionSource::with_backend(
+        Arc::new(backend),
+        Arc::new(AtomicU64::new(0)),
+        test_user_symbols(),
+    );
+    let mut completer = WolframCompleter::new(source, ThemeHandle::new(Theme::Dark));
+
+    let _ = completer.complete("MyContext`", 10);
+    wait_until(|| {
+        completer
+            .source
+            .symbols_for_prefix("MyContext`")
+            .iter()
+            .any(|item| item.value == "foo")
+    });
+
+    let suggestions = completer.complete("MyContext`", 10);
+
+    assert!(
+        suggestions
+            .iter()
+            .any(|suggestion| suggestion.value == "MyContext`foo")
     );
 }
 
@@ -727,7 +867,7 @@ fn async_cache_poll_does_not_block_when_locked() {
 fn slow_usage_details_do_not_starve_symbol_completion() {
     let backend = FakeBackend {
         symbols: HashMap::from([(
-            "Private`yy".to_string(),
+            "Private`".to_string(),
             vec![CompletionItem {
                 value: "yyFast".to_string(),
                 kind: CompletionKind::Symbol,
@@ -783,4 +923,57 @@ fn async_cache_treats_stale_epoch_entries_as_missing() {
         cache.poll_or_claim(&"a".to_string(), 1),
         CachePoll::Spawn
     ));
+}
+
+fn style_of(
+    text: &str,
+    builtin: &HashSet<String>,
+    user: &HashSet<String>,
+    word: &str,
+) -> nu_ansi_term::Style {
+    let styled = highlight_wolfram_text(text, test_styles(), Some(builtin), Some(user));
+    styled
+        .buffer
+        .into_iter()
+        .find(|(_, fragment)| fragment == word)
+        .map(|(style, _)| style)
+        .unwrap_or_else(|| panic!("word {word:?} not found in highlighted output for {text:?}"))
+}
+
+#[test]
+fn highlighter_colors_builtin_symbols() {
+    let builtin: HashSet<String> = ["Plot".to_string()].into_iter().collect();
+    let user: HashSet<String> = HashSet::new();
+    let style = style_of("Plot[x]", &builtin, &user, "Plot");
+    assert_eq!(style, test_styles().builtin_symbol);
+}
+
+#[test]
+fn highlighter_colors_explicit_system_context_as_builtin_even_if_unknown() {
+    let builtin: HashSet<String> = HashSet::new();
+    let user: HashSet<String> = HashSet::new();
+    let style = style_of("System`Foo[x]", &builtin, &user, "System`Foo");
+    assert_eq!(style, test_styles().builtin_symbol);
+}
+
+#[test]
+fn highlighter_colors_defined_user_symbols_differently_from_builtins() {
+    let builtin: HashSet<String> = ["Plot".to_string()].into_iter().collect();
+    let user: HashSet<String> = ["myVar".to_string()].into_iter().collect();
+    let style = style_of("myVar + Plot[x]", &builtin, &user, "myVar");
+    assert_eq!(style, test_styles().user_symbol);
+    assert_ne!(style, test_styles().builtin_symbol);
+}
+
+#[test]
+fn highlighter_leaves_undefined_symbols_unstyled() {
+    let builtin: HashSet<String> = ["Plot".to_string()].into_iter().collect();
+    let user: HashSet<String> = ["myVar".to_string()].into_iter().collect();
+    let style = style_of(
+        "undefinedThing + Plot[x]",
+        &builtin,
+        &user,
+        "undefinedThing",
+    );
+    assert_eq!(style, nu_ansi_term::Style::new());
 }

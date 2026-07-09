@@ -13,10 +13,13 @@ Module[{promptedInput, promptedInputString},
   Internal`WithLocalSettings[
     Off[General::shdw],
     ReleaseHold[
-      ToExpression[WOLFRAMCLIINPUTPLACEHOLDER, InputForm, HoldComplete] /. {
-        HoldPattern[Input[prompt_]] :> promptedInput[prompt],
-        HoldPattern[InputString[prompt_]] :> promptedInputString[prompt]
-      }
+      ToExpression[WOLFRAMCLIINPUTPLACEHOLDER, InputForm, HoldComplete] //
+        Replace[
+          {
+            HoldPattern[Input[prompt_]] :> promptedInput[prompt],
+            HoldPattern[InputString[prompt_]] :> promptedInputString[prompt]
+          }
+        ]
     ],
     On[General::shdw]
   ]

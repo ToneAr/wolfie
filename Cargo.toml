@@ -7,6 +7,7 @@ build = "build_tools/build.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.27"
 nu-ansi-term = "0.50"
 reedline = "0.32"
 wstp = "0.6.0-alpha.5"

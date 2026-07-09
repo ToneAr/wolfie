@@ -325,27 +325,29 @@ impl CompletionSource {
 
         let epoch = self.epoch();
         let mut items = self.local_user_symbols_for_prefix(prefix);
-        if prefix.contains('`') {
-            let cache_start = Instant::now();
-            items.extend(
-                match self.symbols_cache.poll_or_claim(&prefix.to_string(), epoch) {
-                    CachePoll::Ready(items) => items,
-                    CachePoll::Pending => Vec::new(),
-                    CachePoll::Spawn => {
-                        let _ = self.job_sender.send(CompletionJob::Symbols {
-                            prefix: prefix.to_string(),
-                            epoch,
-                        });
-                        Vec::new()
-                    }
-                },
-            );
-            profile_duration(
-                "source.symbols.kernel_cache",
-                cache_start.elapsed(),
-                format!("prefix={prefix:?} count={}", items.len()),
-            );
-        }
+        let query_prefix = symbol_query_prefix(prefix);
+        let cache_start = Instant::now();
+        items.extend(
+            match self.symbols_cache.poll_or_claim(&query_prefix, epoch) {
+                CachePoll::Ready(items) => items,
+                CachePoll::Pending => Vec::new(),
+                CachePoll::Spawn => {
+                    let _ = self.job_sender.send(CompletionJob::Symbols {
+                        prefix: query_prefix.clone(),
+                        epoch,
+                    });
+                    Vec::new()
+                }
+            },
+        );
+        profile_duration(
+            "source.symbols.kernel_cache",
+            cache_start.elapsed(),
+            format!(
+                "prefix={prefix:?} query_prefix={query_prefix:?} count={}",
+                items.len()
+            ),
+        );
 
         if !prefix.contains('`') {
             let builtin_start = Instant::now();
@@ -464,6 +466,18 @@ impl CompletionSource {
         );
         options
     }
+}
+
+pub(crate) fn symbol_query_prefix(prefix: &str) -> String {
+    if let Some(context_end) = prefix.rfind('`') {
+        return prefix[..=context_end].to_string();
+    }
+
+    prefix
+        .char_indices()
+        .nth(2)
+        .map_or(prefix, |(idx, _)| &prefix[..idx])
+        .to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -772,6 +786,7 @@ pub(crate) fn command_name_suggestions(
     [
         ("clear", "Clear the console"),
         ("help", "Show REPL commands"),
+        ("history", "Open the history browser"),
         ("theme", "Change syntax highlighting theme"),
         ("quit", "Quit the REPL"),
     ]
@@ -1010,7 +1025,11 @@ pub(crate) fn symbol_suggestions(
             let (description, style) = match candidate.kind {
                 CompletionKind::Symbol => (
                     symbol_completion_description(&details),
-                    styles.completion_symbol,
+                    if completion_source_kind(candidate) == CompletionSourceKind::Builtin {
+                        styles.completion_symbol
+                    } else {
+                        styles.completion_user_symbol
+                    },
                 ),
                 CompletionKind::Context => (
                     context_completion_description(&details),

@@ -1,4 +1,7 @@
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 use nu_ansi_term::Style;
 use reedline::{Highlighter, StyledText};
@@ -9,26 +12,45 @@ use crate::{
 };
 
 pub(crate) struct WolframHighlighter {
-    symbols: HashSet<String>,
+    builtin_symbols: HashSet<String>,
+    user_symbols: Arc<Mutex<HashSet<String>>>,
     theme: ThemeHandle,
 }
 
 impl WolframHighlighter {
-    pub(crate) fn new(symbols: HashSet<String>, theme: ThemeHandle) -> Self {
-        Self { symbols, theme }
+    pub(crate) fn new(
+        builtin_symbols: HashSet<String>,
+        user_symbols: Arc<Mutex<HashSet<String>>>,
+        theme: ThemeHandle,
+    ) -> Self {
+        Self {
+            builtin_symbols,
+            user_symbols,
+            theme,
+        }
     }
 }
 
 impl Highlighter for WolframHighlighter {
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
-        highlight_wolfram_text(line, self.theme.current().styles(), Some(&self.symbols))
+        let user_symbols = self
+            .user_symbols
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        highlight_wolfram_text(
+            line,
+            self.theme.current().styles(),
+            Some(&self.builtin_symbols),
+            Some(&user_symbols),
+        )
     }
 }
 
 pub(crate) fn highlight_wolfram_text(
     line: &str,
     styles: ThemeStyles,
-    symbols: Option<&HashSet<String>>,
+    builtin_symbols: Option<&HashSet<String>>,
+    user_symbols: Option<&HashSet<String>>,
 ) -> StyledText {
     let mut out = StyledText::new();
     let mut chars = line.char_indices().peekable();
@@ -83,8 +105,15 @@ pub(crate) fn highlight_wolfram_text(
                 }
             }
             let word = &line[start..end];
-            let style = if symbols.is_none_or(|symbols| symbols.contains(short_symbol_name(word))) {
+            let short = short_symbol_name(word);
+            let is_builtin = word.starts_with("System`")
+                || builtin_symbols.is_none_or(|symbols| symbols.contains(short));
+            let is_user_defined = user_symbols
+                .is_some_and(|symbols| symbols.contains(short) || symbols.contains(word));
+            let style = if is_builtin {
                 styles.builtin_symbol
+            } else if is_user_defined {
+                styles.user_symbol
             } else {
                 Style::new()
             };
@@ -98,7 +127,7 @@ pub(crate) fn highlight_wolfram_text(
 }
 
 pub(crate) fn print_highlighted(text: &str, theme: Theme) {
-    for (style, fragment) in highlight_wolfram_text(text, theme.styles(), None).buffer {
+    for (style, fragment) in highlight_wolfram_text(text, theme.styles(), None, None).buffer {
         print!("{}", style.paint(fragment));
     }
     println!();

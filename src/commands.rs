@@ -7,6 +7,7 @@ use crate::theme::{Theme, ThemeHandle, print_theme_browser};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandAction {
     Continue,
+    OpenHistory,
     Quit,
 }
 
@@ -14,6 +15,7 @@ pub(crate) enum CommandAction {
 pub(crate) enum ReplCommand {
     Clear,
     Help,
+    History,
     Theme(ThemeCommand),
     Quit,
 }
@@ -45,6 +47,7 @@ pub(crate) fn execute_repl_command(input: &str, theme: &ThemeHandle) -> CommandA
             print_command_help(theme.current());
             CommandAction::Continue
         }
+        ReplCommand::History => CommandAction::OpenHistory,
         ReplCommand::Theme(ThemeCommand::Cycle) => {
             let next = theme.current().next();
             theme.set(next);
@@ -72,6 +75,7 @@ fn print_command_help(theme: Theme) {
     println!("Commands:");
     println!("  :clear                Clear the console.");
     println!("  :help                 Show this help.");
+    println!("  :history, :hist       Open the history browser (press a key to search/navigate).");
     println!(
         "  :theme                Cycle theme. Current: {}.",
         theme.name()
@@ -104,6 +108,10 @@ pub(crate) fn parse_repl_command(input: &str) -> Result<ReplCommand> {
         "help" | "h" | "?" => {
             reject_extra_args(parts, ":help")?;
             Ok(ReplCommand::Help)
+        }
+        "history" | "hist" => {
+            reject_extra_args(parts, ":history")?;
+            Ok(ReplCommand::History)
         }
         "quit" | "q" | "exit" => {
             reject_extra_args(parts, ":quit")?;

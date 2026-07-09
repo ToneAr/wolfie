@@ -145,7 +145,9 @@ impl KernelClient {
         &mut self,
         input: &str,
         theme: Option<&ThemeHandle>,
-        input_handler: Option<&mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>>,
+        input_handler: Option<
+            &mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>,
+        >,
     ) -> Result<()> {
         let _activity = ActivityGuard::new(self.active.clone());
         self.wstp.evaluate_once(input, theme, input_handler)?;

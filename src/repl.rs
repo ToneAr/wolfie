@@ -8,15 +8,15 @@ use std::{
 
 use anyhow::Result;
 use reedline::{
-    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, Reedline, ReedlineMenu,
-    Signal,
+    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, Reedline, ReedlineMenu, Signal,
 };
 
 use crate::{
     commands::{CommandAction, execute_repl_command},
     completion::{CompletionSource, WolframCompleter, builtin_symbol_names},
     editor::{
-        WolframPrompt, WolframValidator, completion_edit_mode, completion_menu, history_path,
+        HistoryTrigger, WolframPrompt, WolframValidator, completion_edit_mode, completion_menu,
+        history_menu, history_path, history_primed_edit_mode,
     },
     frontend::{FrontEndClient, frontend_status},
     highlighter::WolframHighlighter,
@@ -48,17 +48,26 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
         user_symbols.clone(),
     );
     let symbol_set = builtin_symbol_names().collect();
+    let history_trigger = HistoryTrigger::new();
     let mut line_editor = Reedline::create()
         .use_kitty_keyboard_enhancement(true)
         .with_history(Box::new(FileBackedHistory::with_file(2000, history)?))
-        .with_highlighter(Box::new(WolframHighlighter::new(symbol_set, theme.clone())))
+        .with_highlighter(Box::new(WolframHighlighter::new(
+            symbol_set,
+            user_symbols.clone(),
+            theme.clone(),
+        )))
         .with_completer(Box::new(WolframCompleter::new(
             completion_source,
             theme.clone(),
         )))
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(completion_menu())))
+        .with_menu(ReedlineMenu::HistoryMenu(Box::new(history_menu())))
         .with_validator(Box::new(WolframValidator))
-        .with_edit_mode(Box::new(completion_edit_mode()));
+        .with_edit_mode(history_primed_edit_mode(
+            completion_edit_mode(),
+            history_trigger.clone(),
+        ));
     loop {
         let prompt = WolframPrompt {
             input_prompt: kernel_input_prompt(&kernel)?.unwrap_or_default(),
@@ -75,8 +84,13 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
                     break;
                 }
                 if input.starts_with(':') {
-                    if execute_repl_command(input, &theme) == CommandAction::Quit {
-                        break;
+                    match execute_repl_command(input, &theme) {
+                        CommandAction::Quit => break,
+                        CommandAction::OpenHistory => {
+                            history_trigger.arm();
+                            println!("(press any key to open the history browser)");
+                        }
+                        CommandAction::Continue => {}
                     }
                     continue;
                 }
@@ -85,9 +99,8 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
                         "(kernel is still starting up; the first response can take a few seconds)"
                     );
                 }
-                let mut kernel_input_handler = |request: &KernelInputRequest| {
-                    read_kernel_input(&mut line_editor, request)
-                };
+                let mut kernel_input_handler =
+                    |request: &KernelInputRequest| read_kernel_input(&mut line_editor, request);
                 lock_kernel(&kernel)?.evaluate_repl_input(
                     input,
                     &theme,
@@ -109,8 +122,8 @@ fn print_welcome(
     frontend: Option<&Arc<Mutex<FrontEndClient>>>,
 ) -> Result<()> {
     println!("Wolfram CLI");
-    println!("{}", kernel_status(kernel)?);
-    println!("{}", frontend_status(frontend)?);
+    // println!("{}", kernel_status(kernel)?);
+    // println!("{}", frontend_status(frontend)?);
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
     Ok(())
