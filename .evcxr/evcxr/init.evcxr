@@ -1,0 +1,12 @@
+:cache 500
+:timing
+:fmt {:#?}
+:efmt {:#?}
+
+:dep anyhow = "1"
+:dep clap = { version = "4", features = ["derive"] }
+:dep nu_ansi_term = { package = "nu-ansi-term", version = "0.50" }
+:dep reedline = "0.32"
+:dep wstp = "0.6.0-alpha.5"
+:dep wolfram_expr = { package = "wolfram-expr", version = "=0.6.0-alpha.5" }
+:dep wolfram_app_discovery = { package = "wolfram-app-discovery", version = "0.6.0-alpha.5" }

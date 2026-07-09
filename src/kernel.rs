@@ -113,7 +113,7 @@ impl KernelClient {
     }
 
     pub(crate) fn evaluate_once(&mut self, input: &str) -> Result<()> {
-        self.evaluate(input, None)
+        self.evaluate(input, None, None)
     }
 
     pub(crate) fn status(&self) -> KernelStatus {
@@ -128,18 +128,27 @@ impl KernelClient {
         }
     }
 
+    pub(crate) fn input_prompt(&self) -> Option<String> {
+        self.wstp.input_prompt().map(ToOwned::to_owned)
+    }
+
     pub(crate) fn evaluate_repl_input(
         &mut self,
         input: &str,
-        line_number: usize,
         theme: &ThemeHandle,
+        input_handler: &mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>,
     ) -> Result<()> {
-        self.evaluate(input, Some((line_number, theme)))
+        self.evaluate(input, Some(theme), Some(input_handler))
     }
 
-    fn evaluate(&mut self, input: &str, line_number: Option<(usize, &ThemeHandle)>) -> Result<()> {
+    fn evaluate(
+        &mut self,
+        input: &str,
+        theme: Option<&ThemeHandle>,
+        input_handler: Option<&mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>>,
+    ) -> Result<()> {
         let _activity = ActivityGuard::new(self.active.clone());
-        self.wstp.evaluate_once(input, line_number)?;
+        self.wstp.evaluate_once(input, theme, input_handler)?;
         self.ready = true;
         Ok(())
     }
@@ -280,6 +289,16 @@ pub(crate) fn kernel_status(kernel: &SharedKernel) -> Result<KernelStatus> {
     match kernel.try_lock() {
         Ok(kernel) => Ok(kernel.status()),
         Err(std::sync::TryLockError::WouldBlock) => Ok(KernelStatus::Active),
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            Err(anyhow!("kernel session lock was poisoned"))
+        }
+    }
+}
+
+pub(crate) fn kernel_input_prompt(kernel: &SharedKernel) -> Result<Option<String>> {
+    match kernel.try_lock() {
+        Ok(kernel) => Ok(kernel.input_prompt()),
+        Err(std::sync::TryLockError::WouldBlock) => Ok(None),
         Err(std::sync::TryLockError::Poisoned(_)) => {
             Err(anyhow!("kernel session lock was poisoned"))
         }

@@ -16,20 +16,20 @@ use crate::{
 const COMPLETION_MENU: &str = "completion_menu";
 
 pub(crate) struct WolframPrompt {
-    pub(crate) line_number: usize,
+    pub(crate) input_prompt: String,
     pub(crate) kernel_status: KernelStatus,
     pub(crate) frontend_status: FrontEndStatus,
 }
 
 impl Prompt for WolframPrompt {
     fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
-        format!("In[{}]:= ", self.line_number).into()
+        self.input_prompt.as_str().into()
     }
 
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
         format!(
-            "Kernel: {} | FE: {}",
-            self.kernel_status, self.frontend_status
+            "Status: {}",// | FE: {}",
+            self.kernel_status//, self.frontend_status
         )
         .into()
     }

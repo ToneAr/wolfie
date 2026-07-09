@@ -7,7 +7,10 @@ use std::{
 };
 
 use anyhow::Result;
-use reedline::{FileBackedHistory, Reedline, ReedlineMenu, Signal};
+use reedline::{
+    FileBackedHistory, Prompt, PromptEditMode, PromptHistorySearch, Reedline, ReedlineMenu,
+    Signal,
+};
 
 use crate::{
     commands::{CommandAction, execute_repl_command},
@@ -18,9 +21,10 @@ use crate::{
     frontend::{FrontEndClient, frontend_status},
     highlighter::WolframHighlighter,
     kernel::{
-        KernelClient, SharedKernel, kernel_may_be_slow_to_respond, kernel_status, lock_kernel,
-        spawn_kernel_warmup,
+        KernelClient, SharedKernel, kernel_input_prompt, kernel_may_be_slow_to_respond,
+        kernel_status, lock_kernel, spawn_kernel_warmup,
     },
+    native_wstp::KernelInputRequest,
     theme::{Theme, ThemeHandle},
     wolfram_syntax::remember_user_symbols,
 };
@@ -55,10 +59,9 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(completion_menu())))
         .with_validator(Box::new(WolframValidator))
         .with_edit_mode(Box::new(completion_edit_mode()));
-    let mut line_number = 1;
     loop {
         let prompt = WolframPrompt {
-            line_number,
+            input_prompt: kernel_input_prompt(&kernel)?.unwrap_or_default(),
             kernel_status: kernel_status(&kernel)?,
             frontend_status: frontend_status(frontend.as_ref())?,
         };
@@ -82,10 +85,16 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
                         "(kernel is still starting up; the first response can take a few seconds)"
                     );
                 }
-                lock_kernel(&kernel)?.evaluate_repl_input(input, line_number, &theme)?;
+                let mut kernel_input_handler = |request: &KernelInputRequest| {
+                    read_kernel_input(&mut line_editor, request)
+                };
+                lock_kernel(&kernel)?.evaluate_repl_input(
+                    input,
+                    &theme,
+                    &mut kernel_input_handler,
+                )?;
                 remember_user_symbols(input, &user_symbols);
                 completion_epoch.fetch_add(1, Ordering::Relaxed);
-                line_number += 1;
             }
             Signal::CtrlC => continue,
             Signal::CtrlD => break,
@@ -105,4 +114,48 @@ fn print_welcome(
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
     Ok(())
+}
+
+fn read_kernel_input(
+    line_editor: &mut Reedline,
+    request: &KernelInputRequest,
+) -> Result<Option<String>> {
+    let prompt = KernelInputPrompt {
+        text: request.prompt.clone(),
+    };
+
+    match line_editor.read_line(&prompt)? {
+        Signal::Success(input) => Ok(Some(input)),
+        Signal::CtrlC => Ok(Some(String::new())),
+        Signal::CtrlD => Ok(None),
+    }
+}
+
+struct KernelInputPrompt {
+    text: String,
+}
+
+impl Prompt for KernelInputPrompt {
+    fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
+        self.text.as_str().into()
+    }
+
+    fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
+        "".into()
+    }
+
+    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> std::borrow::Cow<'_, str> {
+        "".into()
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
+        "        ".into()
+    }
+
+    fn render_prompt_history_search_indicator(
+        &self,
+        _history_search: PromptHistorySearch,
+    ) -> std::borrow::Cow<'_, str> {
+        "".into()
+    }
 }
