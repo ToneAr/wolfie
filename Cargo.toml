@@ -1,6 +1,6 @@
 [package]
 name = "wolfram-cli"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 build = "build_tools/build.rs"
 
@@ -12,7 +12,4 @@ nu-ansi-term = "0.50"
 reedline = "0.32"
 wstp = "0.6.0-alpha.5"
 wolfram-expr = "=0.6.0-alpha.5"
-wolfram-app-discovery = "0.6.0-alpha.5"
-
-[build-dependencies]
 wolfram-app-discovery = "0.6.0-alpha.5"

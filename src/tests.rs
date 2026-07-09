@@ -136,6 +136,17 @@ fn symbol_completion_reuses_broader_query_prefixes() {
 }
 
 #[test]
+fn builtin_system_symbol_completion_includes_core_symbols() {
+    let symbols: Vec<_> = builtin_symbols_for_prefix("System`Plo")
+        .into_iter()
+        .map(|item| item.value)
+        .collect();
+
+    assert!(symbols.contains(&"System`Plot".to_string()));
+    assert!(symbols.contains(&"System`PlotRange".to_string()));
+}
+
+#[test]
 fn symbol_details_batch_query_loads_context_and_usage_for_explicit_symbols() {
     let query = symbol_details_batch_query(&["Plot".to_string(), "Sin".to_string()]);
     assert!(query.contains("\"Plot\""));
