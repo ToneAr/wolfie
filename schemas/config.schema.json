@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json",
+  "title": "Wolfish config",
+  "description": "User configuration for wolfish config.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "Optional schema URI for editor validation.",
+      "type": "string"
+    },
+    "theme": {
+      "description": "Theme name to select when the REPL starts.",
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "description": "Default command-line options. Explicit CLI flags override these defaults.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "no-frontend": {
+          "description": "Disable Wolfram FrontEnd-backed completions and rendering support.",
+          "type": "boolean"
+        },
+        "no_frontend": {
+          "description": "Alias for no-frontend.",
+          "type": "boolean"
+        },
+        "no-color": {
+          "description": "Disable ANSI coloring.",
+          "type": "boolean"
+        },
+        "no_color": {
+          "description": "Alias for no-color.",
+          "type": "boolean"
+        },
+        "linkconnect": {
+          "description": "Connect to an existing WSTP link instead of launching a new kernel.",
+          "type": "boolean"
+        },
+        "linkname": {
+          "description": "WSTP link name to use with linkconnect.",
+          "type": "string",
+          "minLength": 1
+        },
+        "linkprotocol": {
+          "description": "WSTP link protocol to use with linkconnect.",
+          "type": "string",
+          "pattern": "^([Ii][Nn][Tt][Rr][Aa][Pp][Rr][Oo][Cc][Ee][Ss][Ss]|[Ss][Hh][Aa][Rr][Ee][Dd][Mm][Ee][Mm][Oo][Rr][Yy]|[Tt][Cc][Pp][Ii][Pp])$"
+        },
+        "linkmode": {
+          "description": "WSTP link mode to pass to a launched Wolfram Kernel.",
+          "type": "string",
+          "minLength": 1
+        },
+        "linkoptions": {
+          "description": "WSTP link options integer to pass to a launched Wolfram Kernel.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "linkconnect": {
+                "const": true
+              }
+            },
+            "required": ["linkconnect"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["linkmode"]
+                },
+                {
+                  "required": ["linkoptions"]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "$schema": "https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json",
+      "theme": "dark",
+      "command": {
+        "no-frontend": false,
+        "no-color": false,
+        "linkconnect": false,
+        "linkname": "my-link",
+        "linkprotocol": "SharedMemory",
+        "linkmode": "Listen",
+        "linkoptions": 4
+      }
+    }
+  ]
+}

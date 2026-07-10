@@ -49,6 +49,19 @@ Evaluate one expression and exit:
 wolfish -e 'Range[5]^2'
 ```
 
+Pass WSTP link mode and link options through to a kernel launched by `wolfish`:
+```sh
+wolfish --linkmode Listen --linkoptions 4
+wolfish --linkmode Listen --linkoptions 4 -e 'Range[5]^2'
+```
+
+Connect to an existing WSTP link for the REPL or one-shot evaluation instead of launching a new kernel. The link protocol defaults to `SharedMemory`; pass `--linkprotocol` for `TCPIP` or `IntraProcess` links:
+```sh
+wolfish --linkconnect --linkname my-link
+wolfish --linkconnect --linkname my-link --linkprotocol TCPIP
+wolfish --linkconnect --linkname my-link -e 'Range[5]^2'
+```
+
 Run a script file through `wolframscript` **[WIP]**:
 ```sh
 wolfish path/to/script.wls -- arg1 arg2
@@ -112,6 +125,8 @@ Lines that start with `:` are handled by the CLI instead of being evaluated as W
 | Command       | Description |
 | ---           | --- |
 | :clear        | Clear the console |
+| :config       | Show config file location |
+| :config edit  | Open config file in `$EDITOR` |
 | :help         | Print help message |
 | :history      | Search command history |
 | :theme        | Cycle current theme |
@@ -124,6 +139,28 @@ Command completions are available only when the line starts with `:`. Wolfram La
 
 ## Themes
 Theme selections made with `:theme` or `:theme {name}` are persisted to the user config file and restored the next time the REPL starts.
+
+CLI defaults can also be set in the same config file. Explicit command-line flags override these defaults where the CLI has a value to override:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json",
+  "theme": "dark",
+  "command": {
+    "no-frontend": false,
+    "no-color": false,
+    "linkconnect": false,
+    "linkname": "my-link",
+    "linkprotocol": "SharedMemory",
+    "linkmode": "Listen",
+    "linkoptions": 4
+  }
+}
+```
+
+The JSON schema for this file is available at [`schemas/config.schema.json`](schemas/config.schema.json).
+
+`linkprotocol` accepts `SharedMemory`, `TCPIP`, or `IntraProcess`. `linkmode` and `linkoptions` are passed to the WSTP link when connecting to an existing kernel, and to the launched kernel command when `wolfish` starts the kernel.
 
 Default user paths:
 

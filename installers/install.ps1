@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $BinaryName = 'wolfish'
 $ExecutableName = "$BinaryName.exe"
 $GitHubRepo = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPO)) { 'ToneAr/wolfish' } else { $env:GITHUB_REPO }
+$ConfigSchemaUrl = 'https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json'
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = 'latest'
@@ -193,6 +194,33 @@ function Get-DefaultInstallDir {
     return (Join-Path $localAppData 'Programs\wolfish\bin')
 }
 
+function Get-DefaultConfigPath {
+    $homeDirectory = if ([string]::IsNullOrWhiteSpace($HOME)) { $env:USERPROFILE } else { $HOME }
+    if ([string]::IsNullOrWhiteSpace($homeDirectory)) {
+        Fail 'HOME or USERPROFILE is not set'
+    }
+
+    $appData = $env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($appData)) {
+        $appData = Join-Path $homeDirectory 'AppData\Roaming'
+    }
+
+    return (Join-Path (Join-Path $appData 'wolfish') 'config.json')
+}
+
+function New-DefaultConfigFile {
+    $configPath = Get-DefaultConfigPath
+    if (Test-Path -LiteralPath $configPath) {
+        return
+    }
+
+    $configDirectory = Split-Path -Parent $configPath
+    New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
+    $content = "{`n  `"`$schema`": `"$ConfigSchemaUrl`"`n}`n"
+    Set-Content -LiteralPath $configPath -Value $content -NoNewline -Encoding utf8
+    Write-Log "Created default config at $configPath"
+}
+
 function Get-ReleaseTargetName {
     if (-not (Test-IsWindows)) {
         Fail 'unsupported operating system: this installer is for Windows'
@@ -363,6 +391,7 @@ if ($BuildFromSource) {
 }
 
 Write-Log "Installed $BinaryName to $destination"
+New-DefaultConfigFile
 
 if (-not (Test-PathContains $InstallDir)) {
     Write-Log "Add $InstallDir to PATH to run $BinaryName without a full path."

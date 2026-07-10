@@ -3,6 +3,9 @@ $binaryName = "wolfish";
 
 $defaultGitHubRepo = "ToneAr/wolfish";
 
+$configSchemaUrl =
+	"https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json";
+
 $cli = ResourceFunction["CommandLineTools"];
 
 $failureTag = Unique["installFailure"];
@@ -153,6 +156,43 @@ defaultInstallDir[] :=
 			"/usr/local/bin",
 			FileNameJoin[{home, ".local", "bin"}]
 		]
+	];
+
+defaultConfigFile[] :=
+	Module[{home, base},
+		home = $HomeDirectory;
+		If[!StringQ[home] || home === "", fail["home directory is not set"]];
+		If[$OperatingSystem === "Windows",
+			base = env["APPDATA"];
+			If[base === "", base = FileNameJoin[{home, "AppData", "Roaming"}]],
+			base = env["XDG_CONFIG_HOME"];
+			If[base === "", base = FileNameJoin[{home, ".config"}]]
+		];
+		FileNameJoin[{base, $binaryName, "config.json"}]
+	];
+
+defaultConfigContent[] :=
+	StringJoin[
+		"{\n",
+		"  \"$schema\": \"",
+		$configSchemaUrl,
+		"\"\n",
+		"}\n"
+	];
+
+createDefaultConfig[] :=
+	Module[{path, directory, result},
+		path = defaultConfigFile[];
+		If[FileExistsQ[path], Return[Null]];
+		directory = DirectoryName[path];
+		If[!DirectoryQ[directory],
+			CreateDirectory[directory, CreateIntermediateDirectories -> True]
+		];
+		result = Check[Export[path, defaultConfigContent[], "Text"], $Failed];
+		If[result === $Failed,
+			fail[StringJoin[ "failed to create config file ", path]]
+		];
+		logMessage["INFO", StringJoin[ "Created default config at ", path]]
 	];
 
 absolutePathQ[path_String] :=
@@ -478,6 +518,7 @@ main[] :=
 			"SUCCESS",
 			StringJoin[ "Installed ", $binaryName, " to ", destination]
 		];
+		createDefaultConfig[];
 		If[!pathContainsQ[installDir],
 			logMessage[
 				"INFO",

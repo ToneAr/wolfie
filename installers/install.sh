@@ -5,6 +5,7 @@ BINARY_NAME="wolfish"
 GITHUB_REPO="${GITHUB_REPO:-ToneAr/wolfish}"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-}"
+CONFIG_SCHEMA_URL="https://raw.githubusercontent.com/ToneAr/wolfish/main/schemas/config.schema.json"
 BUILD_FROM_SOURCE=0
 FORCE=0
 
@@ -63,6 +64,29 @@ default_install_dir() {
     else
         printf '%s\n' "$HOME/.local/bin"
     fi
+}
+
+default_config_dir() {
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        printf '%s\n' "$XDG_CONFIG_HOME/wolfish"
+    else
+        printf '%s\n' "$HOME/.config/wolfish"
+    fi
+}
+
+create_default_config() {
+    config_dir="$(default_config_dir)"
+    config_file="$config_dir/config.json"
+
+    [ -e "$config_file" ] && return 0
+
+    mkdir -p "$config_dir"
+    cat > "$config_file" <<EOF
+{
+  "\$schema": "$CONFIG_SCHEMA_URL"
+}
+EOF
+    log "Created default config at $config_file"
 }
 
 target_name() {
@@ -244,6 +268,7 @@ else
 fi
 
 log "Installed $BINARY_NAME to $destination"
+create_default_config
 
 if ! path_contains "$INSTALL_DIR"; then
     log "Add $INSTALL_DIR to PATH to run $BINARY_NAME without a full path."
