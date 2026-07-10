@@ -73,16 +73,11 @@
             "required": ["linkconnect"]
           },
           "then": {
-            "not": {
-              "anyOf": [
-                {
-                  "required": ["linkmode"]
-                },
-                {
-                  "required": ["linkoptions"]
-                }
-              ]
-            }
+            "anyOf": [
+              {
+                "required": ["linkname"]
+              }
+            ]
           }
         }
       ]
