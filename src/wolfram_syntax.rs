@@ -72,28 +72,68 @@ pub(crate) fn symbol_start(line: &str, pos: usize) -> usize {
         .map_or(0, |idx| idx + 1)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StringPathCompletionContext {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
 pub(crate) fn completion_is_disabled_at_cursor(line: &str, pos: usize) -> bool {
-    cursor_is_in_wolfram_string(line, pos)
+    cursor_is_in_wolfram_string(line, pos) && string_path_completion_context(line, pos).is_none()
+}
+
+pub(crate) fn string_path_completion_context(
+    line: &str,
+    pos: usize,
+) -> Option<StringPathCompletionContext> {
+    let content_start = wolfram_string_content_start_at_cursor(line, pos)?;
+    let before_cursor = line.get(content_start..pos)?;
+    let fragment_start = before_cursor
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(content_start, |(idx, ch)| {
+            content_start + idx + ch.len_utf8()
+        });
+    let fragment = line.get(fragment_start..pos)?;
+
+    path_fragment_matches_file_pattern(fragment).then_some(StringPathCompletionContext {
+        start: fragment_start,
+        end: pos,
+    })
+}
+
+pub(crate) fn path_fragment_matches_file_pattern(fragment: &str) -> bool {
+    !fragment.is_empty()
+        && (fragment.starts_with('/')
+            || fragment.starts_with("~/")
+            || fragment.starts_with("./")
+            || fragment.starts_with("../")
+            || fragment.contains('/'))
 }
 
 pub(crate) fn cursor_is_in_wolfram_string(line: &str, pos: usize) -> bool {
+    wolfram_string_content_start_at_cursor(line, pos).is_some()
+}
+
+pub(crate) fn wolfram_string_content_start_at_cursor(line: &str, pos: usize) -> Option<usize> {
     let Some(before_cursor) = line.get(..pos) else {
-        return false;
+        return None;
     };
 
-    let mut chars = before_cursor.chars().peekable();
-    let mut in_string = false;
+    let mut chars = before_cursor.char_indices().peekable();
+    let mut string_start = None;
     let mut escaped = false;
     let mut comment_depth = 0usize;
 
-    while let Some(ch) = chars.next() {
+    while let Some((idx, ch)) = chars.next() {
         if comment_depth > 0 {
             match ch {
-                '(' if chars.peek() == Some(&'*') => {
+                '(' if chars.peek().is_some_and(|(_, next)| *next == '*') => {
                     chars.next();
                     comment_depth += 1;
                 }
-                '*' if chars.peek() == Some(&')') => {
+                '*' if chars.peek().is_some_and(|(_, next)| *next == ')') => {
                     chars.next();
                     comment_depth -= 1;
                 }
@@ -102,20 +142,20 @@ pub(crate) fn cursor_is_in_wolfram_string(line: &str, pos: usize) -> bool {
             continue;
         }
 
-        if in_string {
+        if string_start.is_some() {
             if escaped {
                 escaped = false;
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == '"' {
-                in_string = false;
+                string_start = None;
             }
             continue;
         }
 
         match ch {
-            '"' => in_string = true,
-            '(' if chars.peek() == Some(&'*') => {
+            '"' => string_start = Some(idx + ch.len_utf8()),
+            '(' if chars.peek().is_some_and(|(_, next)| *next == '*') => {
                 chars.next();
                 comment_depth = 1;
             }
@@ -123,7 +163,7 @@ pub(crate) fn cursor_is_in_wolfram_string(line: &str, pos: usize) -> bool {
         }
     }
 
-    in_string
+    string_start
 }
 
 pub(crate) fn short_symbol_name(symbol: &str) -> &str {

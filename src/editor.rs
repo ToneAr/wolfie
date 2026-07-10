@@ -39,7 +39,7 @@ impl Prompt for WolframPrompt {
 
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
         format!(
-            "Status: {} | FE: {}",
+            "Kernel: {} | FE: {}",
             self.kernel_status, self.frontend_status
         )
         .into()
@@ -187,7 +187,11 @@ impl Menu for StringAwareIdeMenu {
 pub(crate) fn completion_edit_mode() -> Emacs {
     let mut keybindings = default_emacs_keybindings();
 
-    keybindings.add_binding(KeyModifiers::NONE, KeyCode::Tab, accept_or_open_completion());
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        accept_or_open_completion(),
+    );
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Char('i'),

@@ -78,7 +78,10 @@ fn print_command_help(theme: Theme) {
     println!("  :history | :hist      Open the history browser.");
     println!("                        Press a key to search/navigate.");
     println!("                        Can also be opened using CTRL+r");
-    println!("  :theme                Cycle theme. Current: {}.", theme.name());
+    println!(
+        "  :theme                Cycle theme. Current: {}.",
+        theme.name()
+    );
     println!("  :theme {{name}}         Options:");
     println!("                        | plain");
     println!("                        | dark");

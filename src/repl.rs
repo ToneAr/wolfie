@@ -118,7 +118,19 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
 }
 
 fn print_welcome() {
-    println!("Wolf Shell");
+    println!(
+        "{}{}",
+        nu_ansi_term::Style::new()
+            .bold()
+            .underline()
+            .fg(nu_ansi_term::Color::Red)
+            .paint("Wolfram"),
+        nu_ansi_term::Style::new()
+            .bold()
+            .underline()
+            .fg(nu_ansi_term::Color::DarkGray)
+            .paint("Shell")
+    );
     println!("TUI Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
 }

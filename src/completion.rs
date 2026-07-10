@@ -1,5 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
+    env, fs,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, TryLockError,
         atomic::{AtomicU64, Ordering},
@@ -21,8 +23,8 @@ use crate::{
         wolfram_function_call, wolfram_string_literal,
     },
     wolfram_syntax::{
-        completion_is_disabled_at_cursor, is_qualified_symbol_name, option_context,
-        short_symbol_name, symbol_start,
+        cursor_is_in_wolfram_string, is_qualified_symbol_name, option_context, short_symbol_name,
+        string_path_completion_context, symbol_start,
     },
 };
 
@@ -649,13 +651,18 @@ impl Completer for WolframCompleter {
             return suggestions;
         }
 
-        if completion_is_disabled_at_cursor(line, pos) {
+        if cursor_is_in_wolfram_string(line, pos) {
+            let suggestions = file_completion_suggestions(line, pos, styles);
             profile_duration(
-                "complete.string",
+                "complete.string_filesystem",
                 complete_start.elapsed(),
-                format!("line_len={} pos={pos}", line.len()),
+                format!(
+                    "line_len={} pos={pos} count={}",
+                    line.len(),
+                    suggestions.len()
+                ),
             );
-            return Vec::new();
+            return suggestions;
         }
 
         let start = symbol_start(line, pos);
@@ -735,6 +742,145 @@ impl Completer for WolframCompleter {
         );
         suggestions
     }
+}
+
+pub(crate) fn file_completion_suggestions(
+    line: &str,
+    pos: usize,
+    styles: ThemeStyles,
+) -> Vec<Suggestion> {
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let home = env::var_os("HOME").map(PathBuf::from);
+    file_completion_suggestions_from(line, pos, &cwd, home.as_deref(), styles)
+}
+
+pub(crate) fn file_completion_suggestions_from(
+    line: &str,
+    pos: usize,
+    base_dir: &Path,
+    home_dir: Option<&Path>,
+    styles: ThemeStyles,
+) -> Vec<Suggestion> {
+    let Some(context) = string_path_completion_context(line, pos) else {
+        return Vec::new();
+    };
+    let Some(raw_fragment) = line.get(context.start..context.end) else {
+        return Vec::new();
+    };
+    let fragment = unescape_wolfram_string_fragment(raw_fragment);
+    let Some((query_dir, replacement_prefix, entry_prefix)) =
+        file_completion_query_parts(&fragment, base_dir, home_dir)
+    else {
+        return Vec::new();
+    };
+
+    let entries = match fs::read_dir(&query_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let include_hidden = entry_prefix.starts_with('.');
+    let mut candidates = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with(&entry_prefix) || (!include_hidden && name.starts_with('.')) {
+                return None;
+            }
+            let is_dir = entry.path().is_dir();
+            Some((name, is_dir))
+        })
+        .collect::<Vec<_>>();
+
+    candidates.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.to_lowercase().cmp(&right.0.to_lowercase()))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    candidates.truncate(MAX_COMPLETION_SUGGESTIONS);
+
+    candidates
+        .into_iter()
+        .map(|(name, is_dir)| {
+            let completed = format!(
+                "{replacement_prefix}{name}{}",
+                if is_dir { "/" } else { "" }
+            );
+            Suggestion {
+                value: escape_wolfram_string_fragment(&completed),
+                description: Some(if is_dir { "directory" } else { "file" }.to_string()),
+                style: Some(styles.string),
+                extra: None,
+                span: Span {
+                    start: context.start,
+                    end: context.end,
+                },
+                append_whitespace: false,
+            }
+        })
+        .collect()
+}
+
+fn file_completion_query_parts(
+    fragment: &str,
+    base_dir: &Path,
+    home_dir: Option<&Path>,
+) -> Option<(PathBuf, String, String)> {
+    let slash = fragment.rfind('/')?;
+    let replacement_prefix = fragment[..=slash].to_string();
+    let entry_prefix = fragment[slash + 1..].to_string();
+    let query_dir = completion_dir_for_fragment(&replacement_prefix, base_dir, home_dir)?;
+    Some((query_dir, replacement_prefix, entry_prefix))
+}
+
+fn completion_dir_for_fragment(
+    dir_fragment: &str,
+    base_dir: &Path,
+    home_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if dir_fragment.starts_with("~/") {
+        return home_dir.map(|home| home.join(&dir_fragment[2..]));
+    }
+    if dir_fragment.starts_with('/') {
+        return Some(PathBuf::from(dir_fragment));
+    }
+    Some(base_dir.join(dir_fragment))
+}
+
+fn unescape_wolfram_string_fragment(fragment: &str) -> String {
+    let mut unescaped = String::new();
+    let mut chars = fragment.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            unescaped.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('n') => unescaped.push('\n'),
+            Some('r') => unescaped.push('\r'),
+            Some('t') => unescaped.push('\t'),
+            Some(next) => unescaped.push(next),
+            None => unescaped.push('\\'),
+        }
+    }
+    unescaped
+}
+
+fn escape_wolfram_string_fragment(fragment: &str) -> String {
+    let mut escaped = String::new();
+    for ch in fragment.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 pub(crate) fn command_completion_suggestions(

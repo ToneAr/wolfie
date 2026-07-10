@@ -9,9 +9,11 @@ use reedline::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
     sync::{Arc, Mutex, atomic::AtomicU64},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn test_styles() -> ThemeStyles {
@@ -81,6 +83,25 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
         }
         thread::sleep(Duration::from_millis(2));
     }
+}
+
+fn temp_completion_dir() -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    for attempt in 0..100 {
+        let dir = std::env::temp_dir().join(format!(
+            "wolfsh-completion-test-{}-{unique}-{attempt}",
+            std::process::id()
+        ));
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => panic!("failed to create temporary completion directory {dir:?}: {err}"),
+        }
+    }
+    panic!("failed to create a unique temporary completion directory")
 }
 
 #[test]
@@ -389,6 +410,85 @@ fn detects_cursor_inside_wolfram_strings() {
         "(* \"comment quote\" *) Pl",
         22
     ));
+}
+
+#[test]
+fn filesystem_completion_is_enabled_only_for_path_like_strings() {
+    let root = temp_completion_dir();
+    fs::create_dir(root.join("src")).unwrap();
+    fs::write(root.join("sample.wls"), "").unwrap();
+    fs::write(root.join("scratch.txt"), "").unwrap();
+
+    let line = "Import[\"./s";
+    let suggestions =
+        file_completion_suggestions_from(line, line.len(), &root, None, test_styles());
+    let values = suggestions
+        .iter()
+        .map(|suggestion| suggestion.value.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["./src/", "./sample.wls", "./scratch.txt"]);
+    assert!(
+        suggestions
+            .iter()
+            .all(|suggestion| suggestion.span.start == 8)
+    );
+    assert!(
+        suggestions
+            .iter()
+            .all(|suggestion| suggestion.span.end == line.len())
+    );
+    assert!(!completion_is_disabled_at_cursor(line, line.len()));
+
+    let ordinary_string = "\"sample";
+    assert!(
+        file_completion_suggestions_from(
+            ordinary_string,
+            ordinary_string.len(),
+            &root,
+            None,
+            test_styles(),
+        )
+        .is_empty()
+    );
+    assert!(completion_is_disabled_at_cursor(
+        ordinary_string,
+        ordinary_string.len()
+    ));
+
+    let outside_string = "./s";
+    assert!(
+        file_completion_suggestions_from(
+            outside_string,
+            outside_string.len(),
+            &root,
+            None,
+            test_styles(),
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn filesystem_completion_expands_home_paths_inside_strings() {
+    let root = temp_completion_dir();
+    fs::create_dir(root.join("Documents")).unwrap();
+    fs::write(root.join("Downloads.txt"), "").unwrap();
+
+    let line = "File[\"~/Do";
+    let suggestions = file_completion_suggestions_from(
+        line,
+        line.len(),
+        &temp_completion_dir(),
+        Some(&root),
+        test_styles(),
+    );
+    let values = suggestions
+        .iter()
+        .map(|suggestion| suggestion.value.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["~/Documents/", "~/Downloads.txt"]);
 }
 
 #[test]
