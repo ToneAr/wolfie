@@ -33,7 +33,7 @@ find_kernel() {
 
     kernel_name=$(kernel_binary_name)
     if command -v wolframscript >/dev/null 2>&1; then
-        kernels_tmp=$(mktemp "${TMPDIR:-/tmp}/wolfram-cli-kernels.XXXXXX")
+        kernels_tmp=$(mktemp "${TMPDIR:-/tmp}/wolfsh-kernels.XXXXXX")
         if wolframscript -showkernels > "$kernels_tmp" 2>/dev/null; then
             while IFS= read -r line; do
                 line=$(printf '%s\n' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -74,13 +74,13 @@ need_command awk
 kernel=$(find_kernel) || fail "could not find WolframKernel. Set WOLFRAM_KERNEL to the kernel executable path."
 
 output="$script_dir/builtin_symbols.tsv"
-tmp=$(mktemp "${TMPDIR:-/tmp}/wolfram-cli-builtin-symbols.XXXXXX")
+tmp=$(mktemp "${TMPDIR:-/tmp}/wolfsh-builtin-symbols.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 
 log "Generating $output"
 log "Using kernel: $kernel"
 
-query='WriteString[$Output, ToString[Get["build_tools/wl/builtin_symbols.wl"], OutputForm]]; Quit[]'
+query='(Get["build_tools/wl/query_to_output_form.wl"])[(Get["build_tools/wl/builtin_symbols.wl"])[]]'
 if ! "$kernel" -noprompt -run "$query" > "$tmp"; then
     fail "WolframKernel failed while generating builtin symbols"
 fi

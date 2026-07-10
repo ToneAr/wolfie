@@ -1,1 +1,5 @@
-WriteString[$Output, ToString[__CODE__, OutputForm]]; Quit[]
+Function[
+	{code},
+	WriteString[$Output, ToString[code, OutputForm]];
+	Quit[]
+]

@@ -1,248 +1,248 @@
 name: Release
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - "build*"
-      - "test*"
-      - "v*"
+    workflow_dispatch:
+    push:
+        tags:
+            - "build*"
+            - "test*"
+            - "v*"
 
 permissions:
-  contents: write
+    contents: write
 
 env:
-  CARGO_TERM_COLOR: always
-  WOLFRAM_ENGINE_VERSION: "15.0.0"
-  WOLFRAM_ENGINE_PACKAGE_VERSION: "15.0.0.0"
+    CARGO_TERM_COLOR: always
+    WOLFRAM_ENGINE_VERSION: "15.0.0"
+    WOLFRAM_ENGINE_PACKAGE_VERSION: "15.0.0.0"
 
 jobs:
-  build:
-    name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            systemid: Linux-x86-64
-            archive: tar.gz
-          - name: macos-x86_64
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            systemid: MacOSX-x86-64
-            archive: tar.gz
-          - name: macos-aarch64
-            runner: macos-15
-            target: aarch64-apple-darwin
-            systemid: MacOSX-ARM64
-            archive: tar.gz
-          - name: windows-x86_64
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            systemid: Windows-x86-64
-            archive: zip
+    build:
+        name: Build ${{ matrix.name }}
+        runs-on: ${{ matrix.runner }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: linux-x86_64
+                      runner: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                      systemid: Linux-x86-64
+                      archive: tar.gz
+                    - name: macos-x86_64
+                      runner: macos-15-intel
+                      target: x86_64-apple-darwin
+                      systemid: MacOSX-x86-64
+                      archive: tar.gz
+                    - name: macos-aarch64
+                      runner: macos-15
+                      target: aarch64-apple-darwin
+                      systemid: MacOSX-ARM64
+                      archive: tar.gz
+                    - name: windows-x86_64
+                      runner: windows-latest
+                      target: x86_64-pc-windows-msvc
+                      systemid: Windows-x86-64
+                      archive: zip
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Avoid Wolfram kernel activation during build scripts (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: echo "WOLFRAM_KERNEL=/nonexistent/WolframKernel" >> "$GITHUB_ENV"
+            - name: Avoid Wolfram kernel activation during build scripts (Unix)
+              if: runner.os != 'Windows'
+              shell: bash
+              run: echo "WOLFRAM_KERNEL=/nonexistent/WolframKernel" >> "$GITHUB_ENV"
 
-      - name: Avoid Wolfram kernel activation during build scripts (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Add-Content -Path $env:GITHUB_ENV -Value 'WOLFRAM_KERNEL=C:\nonexistent\WolframKernel.exe'
+            - name: Avoid Wolfram kernel activation during build scripts (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: Add-Content -Path $env:GITHUB_ENV -Value 'WOLFRAM_KERNEL=C:\nonexistent\WolframKernel.exe'
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.target }}
 
-      - name: Install Linux link dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y uuid-dev
+            - name: Install Linux link dependencies
+              if: runner.os == 'Linux'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update
+                  sudo apt-get install -y uuid-dev
 
-      - name: Extract Linux WSTP CompilerAdditions
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          wstp_dir="$RUNNER_TEMP/wstp-${{ matrix.systemid }}"
-          mkdir -p "$wstp_dir"
-          docker run --rm --user root \
-            -v "$wstp_dir:/out" \
-            wolframresearch/wolframengine:${{ env.WOLFRAM_ENGINE_VERSION }} \
-            sh -lc '
-              set -e
-              src=$(find /usr/local/Wolfram -maxdepth 10 -type d -path "*/SystemFiles/Links/WSTP/DeveloperKit/Linux-x86-64/CompilerAdditions" -print -quit)
-              if [ -z "$src" ]; then
-                echo "Could not find Linux-x86-64 WSTP CompilerAdditions in the Wolfram Engine image." >&2
-                find /usr/local/Wolfram -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d >&2 || true
-                exit 1
-              fi
-              cp -R "$src/." /out/
-            '
-          test -f "$wstp_dir/libWSTP64i4.a"
-          echo "WSTP_COMPILER_ADDITIONS_DIRECTORY=$wstp_dir" >> "$GITHUB_ENV"
-          echo "Using WSTP CompilerAdditions: $wstp_dir"
+            - name: Extract Linux WSTP CompilerAdditions
+              if: runner.os == 'Linux'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  wstp_dir="$RUNNER_TEMP/wstp-${{ matrix.systemid }}"
+                  mkdir -p "$wstp_dir"
+                  docker run --rm --user root \
+                    -v "$wstp_dir:/out" \
+                    wolframresearch/wolframengine:${{ env.WOLFRAM_ENGINE_VERSION }} \
+                    sh -lc '
+                      set -e
+                      src=$(find /usr/local/Wolfram -maxdepth 10 -type d -path "*/SystemFiles/Links/WSTP/DeveloperKit/Linux-x86-64/CompilerAdditions" -print -quit)
+                      if [ -z "$src" ]; then
+                        echo "Could not find Linux-x86-64 WSTP CompilerAdditions in the Wolfram Engine image." >&2
+                        find /usr/local/Wolfram -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d >&2 || true
+                        exit 1
+                      fi
+                      cp -R "$src/." /out/
+                    '
+                  test -f "$wstp_dir/libWSTP64i4.a"
+                  echo "WSTP_COMPILER_ADDITIONS_DIRECTORY=$wstp_dir" >> "$GITHUB_ENV"
+                  echo "Using WSTP CompilerAdditions: $wstp_dir"
 
-      - name: Extract macOS WSTP CompilerAdditions
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          dmg="$RUNNER_TEMP/WolframEngine.dmg"
-          mount_dir="$RUNNER_TEMP/wolfram-engine-mount"
-          wstp_out="$RUNNER_TEMP/wstp-${{ matrix.systemid }}"
-          url="https://files.wolframcdn.com/packages/Homebrew/${{ env.WOLFRAM_ENGINE_PACKAGE_VERSION }}/WolframEngine_${{ env.WOLFRAM_ENGINE_VERSION }}_MAC.dmg"
+            - name: Extract macOS WSTP CompilerAdditions
+              if: runner.os == 'macOS'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  dmg="$RUNNER_TEMP/WolframEngine.dmg"
+                  mount_dir="$RUNNER_TEMP/wolfram-engine-mount"
+                  wstp_out="$RUNNER_TEMP/wstp-${{ matrix.systemid }}"
+                  url="https://files.wolframcdn.com/packages/Homebrew/${{ env.WOLFRAM_ENGINE_PACKAGE_VERSION }}/WolframEngine_${{ env.WOLFRAM_ENGINE_VERSION }}_MAC.dmg"
 
-          curl --fail --location --retry 3 --output "$dmg" "$url"
-          ls -lh "$dmg"
-          df -h "$RUNNER_TEMP"
-          hdiutil imageinfo "$dmg"
+                  curl --fail --location --retry 3 --output "$dmg" "$url"
+                  ls -lh "$dmg"
+                  df -h "$RUNNER_TEMP"
+                  hdiutil imageinfo "$dmg"
 
-          mkdir -p "$mount_dir"
-          if ! hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -readonly -noverify; then
-            echo "hdiutil attach returned a non-zero exit code; checking whether the image mounted anyway."
-            mount | grep -F "$mount_dir" || true
-            if [ -z "$(find "$mount_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-              echo "::error::hdiutil attach failed and $mount_dir is empty."
-              exit 1
-            fi
-            echo "DMG is mounted at $mount_dir despite hdiutil's non-zero exit code; continuing."
-          fi
-          trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
+                  mkdir -p "$mount_dir"
+                  if ! hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -readonly -noverify; then
+                    echo "hdiutil attach returned a non-zero exit code; checking whether the image mounted anyway."
+                    mount | grep -F "$mount_dir" || true
+                    if [ -z "$(find "$mount_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+                      echo "::error::hdiutil attach failed and $mount_dir is empty."
+                      exit 1
+                    fi
+                    echo "DMG is mounted at $mount_dir despite hdiutil's non-zero exit code; continuing."
+                  fi
+                  trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
 
-          wstp_dir=$(find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/${{ matrix.systemid }}/CompilerAdditions" -type d -print -quit 2>/dev/null || true)
-          if [ -z "$wstp_dir" ]; then
-            echo "::error::Could not find ${{ matrix.systemid }} WSTP CompilerAdditions in the Wolfram Engine DMG."
-            echo "DeveloperKit directories found:"
-            find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d -print 2>/dev/null || true
-            exit 1
-          fi
+                  wstp_dir=$(find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/${{ matrix.systemid }}/CompilerAdditions" -type d -print -quit 2>/dev/null || true)
+                  if [ -z "$wstp_dir" ]; then
+                    echo "::error::Could not find ${{ matrix.systemid }} WSTP CompilerAdditions in the Wolfram Engine DMG."
+                    echo "DeveloperKit directories found:"
+                    find "$mount_dir" -path "*/SystemFiles/Links/WSTP/DeveloperKit/*" -type d -print 2>/dev/null || true
+                    exit 1
+                  fi
 
-          mkdir -p "$wstp_out"
-          cp -R "$wstp_dir"/. "$wstp_out"/
-          if [ ! -f "$wstp_out/libWSTPi4.a" ]; then
-            echo "::error::No libWSTPi4.a found after copying ${{ matrix.systemid }} WSTP CompilerAdditions from $wstp_dir."
-            find "$wstp_out" -maxdepth 2 -type f -print || true
-            exit 1
-          fi
-          echo "WSTP_COMPILER_ADDITIONS_DIRECTORY=$wstp_out" >> "$GITHUB_ENV"
-          echo "Using WSTP CompilerAdditions: $wstp_out"
+                  mkdir -p "$wstp_out"
+                  cp -R "$wstp_dir"/. "$wstp_out"/
+                  if [ ! -f "$wstp_out/libWSTPi4.a" ]; then
+                    echo "::error::No libWSTPi4.a found after copying ${{ matrix.systemid }} WSTP CompilerAdditions from $wstp_dir."
+                    find "$wstp_out" -maxdepth 2 -type f -print || true
+                    exit 1
+                  fi
+                  echo "WSTP_COMPILER_ADDITIONS_DIRECTORY=$wstp_out" >> "$GITHUB_ENV"
+                  echo "Using WSTP CompilerAdditions: $wstp_out"
 
-      - name: Extract Windows WSTP CompilerAdditions
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # Starting with Wolfram Engine 15.0, the winget installer is a .zip containing
-          # a Burn bootstrapper .exe plus the underlying .msi and its external .cab files
-          # (rather than a single self-contained .msi). Download the archive, expand it,
-          # and run an administrative install against the .msi so it pulls its payload
-          # from the sibling .cab files, exactly as the old single-file .msi did.
-          $archive = Join-Path $env:RUNNER_TEMP 'WolframEngine.zip'
-          $extractSrc = Join-Path $env:RUNNER_TEMP 'wolfram-engine-installer'
-          $extractRoot = Join-Path $env:RUNNER_TEMP 'wolfram-engine'
-          $url = 'https://files.wolframcdn.com/packages/winget/${{ env.WOLFRAM_ENGINE_PACKAGE_VERSION }}/WolframEngine_${{ env.WOLFRAM_ENGINE_VERSION }}_WIN.zip'
+            - name: Extract Windows WSTP CompilerAdditions
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  # Starting with Wolfram Engine 15.0, the winget installer is a .zip containing
+                  # a Burn bootstrapper .exe plus the underlying .msi and its external .cab files
+                  # (rather than a single self-contained .msi). Download the archive, expand it,
+                  # and run an administrative install against the .msi so it pulls its payload
+                  # from the sibling .cab files, exactly as the old single-file .msi did.
+                  $archive = Join-Path $env:RUNNER_TEMP 'WolframEngine.zip'
+                  $extractSrc = Join-Path $env:RUNNER_TEMP 'wolfram-engine-installer'
+                  $extractRoot = Join-Path $env:RUNNER_TEMP 'wolfram-engine'
+                  $url = 'https://files.wolframcdn.com/packages/winget/${{ env.WOLFRAM_ENGINE_PACKAGE_VERSION }}/WolframEngine_${{ env.WOLFRAM_ENGINE_VERSION }}_WIN.zip'
 
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          Expand-Archive -Path $archive -DestinationPath $extractSrc
+                  Invoke-WebRequest -Uri $url -OutFile $archive
+                  Expand-Archive -Path $archive -DestinationPath $extractSrc
 
-          $msi = Get-ChildItem -Path $extractSrc -Filter '*.msi' | Select-Object -First 1
-          if (-not $msi) {
-            throw "No .msi file found in the downloaded Wolfram Engine archive."
-          }
+                  $msi = Get-ChildItem -Path $extractSrc -Filter '*.msi' | Select-Object -First 1
+                  if (-not $msi) {
+                    throw "No .msi file found in the downloaded Wolfram Engine archive."
+                  }
 
-          $process = Start-Process -FilePath msiexec.exe -ArgumentList @('/a', $msi.FullName, '/qn', "TARGETDIR=$extractRoot", '/norestart') -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "msiexec administrative extraction failed with exit code $($process.ExitCode)"
-          }
+                  $process = Start-Process -FilePath msiexec.exe -ArgumentList @('/a', $msi.FullName, '/qn', "TARGETDIR=$extractRoot", '/norestart') -Wait -PassThru
+                  if ($process.ExitCode -ne 0) {
+                    throw "msiexec administrative extraction failed with exit code $($process.ExitCode)"
+                  }
 
-          $systemId = '${{ matrix.systemid }}'
-          $pattern = "\\SystemFiles\\Links\\WSTP\\DeveloperKit\\$([Regex]::Escape($systemId))\\CompilerAdditions$"
-          $wstpDir = Get-ChildItem -Path $extractRoot -Recurse -Directory -Filter CompilerAdditions |
-            Where-Object { $_.FullName -match $pattern } |
-            Select-Object -First 1
+                  $systemId = '${{ matrix.systemid }}'
+                  $pattern = "\\SystemFiles\\Links\\WSTP\\DeveloperKit\\$([Regex]::Escape($systemId))\\CompilerAdditions$"
+                  $wstpDir = Get-ChildItem -Path $extractRoot -Recurse -Directory -Filter CompilerAdditions |
+                    Where-Object { $_.FullName -match $pattern } |
+                    Select-Object -First 1
 
-          if (-not $wstpDir) {
-            Write-Error "Could not find $systemId WSTP CompilerAdditions in the Wolfram Engine MSI."
-            Get-ChildItem -Path $extractRoot -Recurse -Directory -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -like '*SystemFiles*Links*WSTP*DeveloperKit*' } |
-              Select-Object -ExpandProperty FullName
-            exit 1
-          }
+                  if (-not $wstpDir) {
+                    Write-Error "Could not find $systemId WSTP CompilerAdditions in the Wolfram Engine MSI."
+                    Get-ChildItem -Path $extractRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -like '*SystemFiles*Links*WSTP*DeveloperKit*' } |
+                      Select-Object -ExpandProperty FullName
+                    exit 1
+                  }
 
-          $lib = Get-ChildItem -Path $wstpDir.FullName -Filter '*WSTP*.lib' | Select-Object -First 1
-          if (-not $lib) {
-            Write-Error "No WSTP .lib file found in $($wstpDir.FullName)."
-            exit 1
-          }
+                  $lib = Get-ChildItem -Path $wstpDir.FullName -Filter '*WSTP*.lib' | Select-Object -First 1
+                  if (-not $lib) {
+                    Write-Error "No WSTP .lib file found in $($wstpDir.FullName)."
+                    exit 1
+                  }
 
-          Add-Content -Path $env:GITHUB_ENV -Value "WSTP_COMPILER_ADDITIONS_DIRECTORY=$($wstpDir.FullName)"
-          Write-Host "Using WSTP CompilerAdditions: $($wstpDir.FullName)"
+                  Add-Content -Path $env:GITHUB_ENV -Value "WSTP_COMPILER_ADDITIONS_DIRECTORY=$($wstpDir.FullName)"
+                  Write-Host "Using WSTP CompilerAdditions: $($wstpDir.FullName)"
 
-      - name: Build
-        env:
-          RUSTFLAGS: -C strip=symbols
-        run: cargo build --release --locked --target ${{ matrix.target }}
+            - name: Build
+              env:
+                  RUSTFLAGS: -C strip=symbols
+              run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Test
-        run: cargo test --locked --target ${{ matrix.target }}
+            - name: Test
+              run: cargo test --locked --target ${{ matrix.target }}
 
-      - name: Package Unix
-        if: matrix.archive == 'tar.gz' && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build'))
-        shell: bash
-        run: |
-          set -euo pipefail
-          package="wolfram-cli-${{ matrix.name }}"
-          mkdir "$package"
-          cp "target/${{ matrix.target }}/release/wolfram-cli" "$package/"
-          cp README.md "$package/"
-          tar -czf "$package.tar.gz" "$package"
+            - name: Package Unix
+              if: matrix.archive == 'tar.gz' && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build'))
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  package="wolfsh-${{ matrix.name }}"
+                  mkdir "$package"
+                  cp "target/${{ matrix.target }}/release/wolfsh" "$package/"
+                  cp README.md "$package/"
+                  tar -czf "$package.tar.gz" "$package"
 
-      - name: Package Windows
-        if: matrix.archive == 'zip' && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build'))
-        shell: pwsh
-        run: |
-          $package = "wolfram-cli-${{ matrix.name }}"
-          New-Item -ItemType Directory -Path $package
-          Copy-Item "target/${{ matrix.target }}/release/wolfram-cli.exe" $package
-          Copy-Item README.md $package
-          Compress-Archive -Path $package -DestinationPath "$package.zip"
+            - name: Package Windows
+              if: matrix.archive == 'zip' && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build'))
+              shell: pwsh
+              run: |
+                  $package = "wolfsh-${{ matrix.name }}"
+                  New-Item -ItemType Directory -Path $package
+                  Copy-Item "target/${{ matrix.target }}/release/wolfsh.exe" $package
+                  Copy-Item README.md $package
+                  Compress-Archive -Path $package -DestinationPath "$package.zip"
 
-      - name: Upload artifact
+            - name: Upload artifact
+              if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build')
+              uses: actions/upload-artifact@v4
+              with:
+                  name: wolfsh-${{ matrix.name }}
+                  path: wolfsh-${{ matrix.name }}.${{ matrix.archive }}
+                  if-no-files-found: error
+
+    release:
+        name: Publish release
         if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build')
-        uses: actions/upload-artifact@v4
-        with:
-          name: wolfram-cli-${{ matrix.name }}
-          path: wolfram-cli-${{ matrix.name }}.${{ matrix.archive }}
-          if-no-files-found: error
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: dist
+                  pattern: wolfsh-*
+                  merge-multiple: true
 
-  release:
-    name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/build')
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: wolfram-cli-*
-          merge-multiple: true
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+            - name: Publish GitHub release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: dist/*

@@ -74,17 +74,22 @@ pub(crate) fn execute_repl_command(input: &str, theme: &ThemeHandle) -> CommandA
 fn print_command_help(theme: Theme) {
     println!("Commands:");
     println!("  :clear                Clear the console.");
-    println!("  :help                 Show this help.");
-    println!("  :history, :hist       Open the history browser (press a key to search/navigate).");
-    println!(
-        "  :theme                Cycle theme. Current: {}.",
-        theme.name()
-    );
-    println!("  :theme dark|light|solarized|gruvbox|monokai|plain");
-    println!("                       Set syntax highlighting theme.");
-    println!("  :theme list          Browse available themes.");
+    println!("  :help | :h | :?       Show this help.");
+    println!("  :history | :hist      Open the history browser.");
+    println!("                        Press a key to search/navigate.");
+    println!("                        Can also be opened using CTRL+r");
+    println!("  :theme                Cycle theme. Current: {}.", theme.name());
+    println!("  :theme {{name}}         Options:");
+    println!("                        | plain");
+    println!("                        | dark");
+    println!("                        | light");
+    println!("                        | solarized");
+    println!("                        | gruvbox");
+    println!("                        | monokai");
+    println!("                        Set syntax highlighting theme.");
+    println!("  :theme list           Browse available themes.");
     println!("  :theme show           Show the current theme.");
-    println!("  :quit                 Quit the REPL.");
+    println!("  :quit | :q            Quit the REPL.");
 }
 
 pub(crate) fn parse_repl_command(input: &str) -> Result<ReplCommand> {

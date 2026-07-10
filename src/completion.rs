@@ -18,7 +18,7 @@ use crate::{
     theme::{Theme, ThemeHandle, ThemeStyles},
     wl::{
         OPTIONS_QUERY_WL, SYMBOL_COMPLETION_QUERY_WL, SYMBOL_DETAILS_BATCH_QUERY_WL,
-        wolfram_string_literal,
+        wolfram_function_call, wolfram_string_literal,
     },
     wolfram_syntax::{
         completion_is_disabled_at_cursor, is_qualified_symbol_name, option_context,
@@ -141,7 +141,7 @@ impl KernelBackend for KernelBackendImpl {
     }
 
     fn load_options(&self, head: &str) -> Result<Vec<String>> {
-        let code = OPTIONS_QUERY_WL.replace("__HEAD__", &wolfram_string_literal(head));
+        let code = wolfram_function_call(OPTIONS_QUERY_WL, &[wolfram_string_literal(head)]);
         self.query_lines(&code)
             .with_context(|| format!("failed to load options for {head}"))
     }
@@ -501,7 +501,10 @@ pub(crate) enum CompletionKind {
 /// turn a query matching dozens of names into a multi-second call. Usage text
 /// is fetched separately, in small batches, via `symbol_details_batch_query`.
 pub(crate) fn symbol_completion_query(prefix: &str) -> String {
-    SYMBOL_COMPLETION_QUERY_WL.replace("__PREFIX__", &wolfram_string_literal(prefix))
+    wolfram_function_call(
+        SYMBOL_COMPLETION_QUERY_WL,
+        &[wolfram_string_literal(prefix)],
+    )
 }
 
 /// Fetches context + usage for a small, explicit list of symbol names in a
@@ -512,7 +515,7 @@ pub(crate) fn symbol_details_batch_query(symbols: &[String]) -> String {
         .map(|symbol| wolfram_string_literal(symbol))
         .collect::<Vec<_>>()
         .join(", ");
-    SYMBOL_DETAILS_BATCH_QUERY_WL.replace("__NAMES__", &names)
+    wolfram_function_call(SYMBOL_DETAILS_BATCH_QUERY_WL, &[format!("{{{names}}}")])
 }
 
 pub(crate) fn builtin_symbol_names() -> impl Iterator<Item = String> {

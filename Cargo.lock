@@ -1242,20 +1242,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wolfram-cli"
-version = "0.4.4"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm",
- "nu-ansi-term",
- "reedline",
- "wolfram-app-discovery",
- "wolfram-expr",
- "wstp",
-]
-
-[[package]]
 name = "wolfram-expr"
 version = "0.6.0-alpha.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1286,6 +1272,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "wolfsh"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "nu-ansi-term",
+ "reedline",
+ "wolfram-app-discovery",
+ "wolfram-expr",
+ "wstp",
 ]
 
 [[package]]

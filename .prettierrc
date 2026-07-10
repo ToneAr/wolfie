@@ -1,0 +1,8 @@
+{
+	"plugins": ["prettier-plugin-wolfram"],
+	"useTabs": true,
+	"tabWidth": 4,
+	"wolfram": {
+		"alignRuleValues": true
+	}
+}

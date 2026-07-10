@@ -108,6 +108,16 @@ fn escapes_wolfram_string_literals() {
 }
 
 #[test]
+fn invokes_wolfram_files_as_immediate_function_calls() {
+    let query = symbol_completion_query("LP");
+    let compact_query = query.split_whitespace().collect::<String>();
+
+    assert!(compact_query.starts_with("(Function[{p},"));
+    assert!(compact_query.ends_with(")[\"LP\"]"));
+    assert!(!query.contains("__PREFIX__"));
+}
+
+#[test]
 fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     let query = symbol_completion_query("LP");
     let compact_query = query.split_whitespace().collect::<String>();
@@ -149,9 +159,11 @@ fn builtin_system_symbol_completion_includes_core_symbols() {
 #[test]
 fn symbol_details_batch_query_loads_context_and_usage_for_explicit_symbols() {
     let query = symbol_details_batch_query(&["Plot".to_string(), "Sin".to_string()]);
-    assert!(query.contains("\"Plot\""));
-    assert!(query.contains("\"Sin\""));
-    assert!(query.contains("ToExpression[name <> \"::usage\"]"));
+    let compact_query = query.split_whitespace().collect::<String>();
+
+    assert!(compact_query.starts_with("(Function[{names},"));
+    assert!(compact_query.ends_with(")[{\"Plot\",\"Sin\"}]"));
+    assert!(compact_query.contains("ToExpression[StringJoin[name,\"::usage\"]]"));
     assert!(query.contains("If[StringQ[raw]"));
     assert!(query.contains("contextOf[name_]"));
     assert!(!query.contains("Symbol[name]"));
@@ -161,7 +173,11 @@ fn symbol_details_batch_query_loads_context_and_usage_for_explicit_symbols() {
 #[test]
 fn user_input_evaluation_preserves_kernel_context_state() {
     let expr = wolfram_user_input_evaluation_expr("x");
-    assert!(expr.contains("ToExpression[\"x\", InputForm, HoldComplete]"));
+    let compact_expr = expr.split_whitespace().collect::<String>();
+
+    assert!(compact_expr.starts_with("(Function[{input},"));
+    assert!(expr.contains("ToExpression[input, InputForm, HoldComplete]"));
+    assert!(compact_expr.ends_with(")[\"x\"]"));
     assert!(!expr.contains("$Context ="));
     assert!(!expr.contains("$ContextPath ="));
 }

@@ -1,6 +1,6 @@
 [package]
-name = "wolfram-cli"
-version = "0.4.4"
+name = "wolfsh"
+version = "0.4.6"
 edition = "2024"
 build = "build_tools/build.rs"
 

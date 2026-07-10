@@ -6,14 +6,15 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use nu_ansi_term::Color;
 use wolfram_expr::{Expr, ExprKind, Symbol};
 use wstp::{Link, Protocol, sys};
 
 use crate::{
     kernel::{KernelExit, kernel_path},
     profiler::{profile_duration, profile_event},
-    theme::ThemeHandle,
-    wl::{WSTP_EVALUATE_USER_INPUT_WL, wolfram_string_literal},
+    theme::{Theme, ThemeHandle},
+    wl::{WSTP_EVALUATE_USER_INPUT_WL, wolfram_function_call, wolfram_string_literal},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +60,89 @@ type KernelInputHandler<'a> = dyn FnMut(&KernelInputRequest) -> Result<Option<St
 fn print_kernel_text(text: &str) -> Result<()> {
     print!("{text}");
     io::stdout().flush().context("failed to flush stdout")
+}
+
+fn print_kernel_message_text(
+    text: &str,
+    symbol: &str,
+    tag: &str,
+    theme: Option<&ThemeHandle>,
+) -> Result<()> {
+    print_kernel_text(&render_message_text_with_color(
+        text,
+        symbol,
+        tag,
+        message_identifier_color_enabled(theme),
+    ))
+}
+
+fn message_identifier_color_enabled(theme: Option<&ThemeHandle>) -> bool {
+    !matches!(theme.map(ThemeHandle::current), Some(Theme::Plain))
+}
+
+fn render_message_text_with_color(text: &str, symbol: &str, tag: &str, use_color: bool) -> String {
+    let Some((prefix, identifier, rest)) = message_text_identifier(text, symbol, tag) else {
+        return text.to_owned();
+    };
+
+    if use_color {
+        format!("{}{}{}", prefix, Color::Red.paint(identifier), rest)
+    } else {
+        text.to_owned()
+    }
+}
+
+fn message_text_identifier<'a>(
+    text: &'a str,
+    symbol: &str,
+    tag: &str,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    message_text_identifier_for_symbol(text, symbol, tag).or_else(|| {
+        message_text_identifier_for_symbol(text, short_message_symbol_name(symbol), tag)
+    })
+}
+
+fn message_text_identifier_for_symbol<'a>(
+    text: &'a str,
+    symbol: &str,
+    tag: &str,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    for line_start in message_line_starts(text) {
+        let after_line_start = text.get(line_start..)?;
+        let after_symbol = after_line_start.get(symbol.len()..)?;
+        if !after_symbol.starts_with("::") {
+            continue;
+        }
+
+        let identifier_end = line_start + symbol.len() + "::".len() + tag.len();
+        let after_separator = text.get(line_start + symbol.len() + "::".len()..)?;
+        if !after_separator.starts_with(tag) {
+            continue;
+        }
+
+        let rest = text.get(identifier_end..)?;
+        if rest.is_empty()
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch == ':' || ch.is_whitespace())
+        {
+            return Some((&text[..line_start], &text[line_start..identifier_end], rest));
+        }
+    }
+
+    None
+}
+
+fn message_line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(
+        text.match_indices('\n')
+            .map(|(idx, _)| idx + '\n'.len_utf8()),
+    )
+}
+
+fn short_message_symbol_name(symbol: &str) -> &str {
+    symbol.rsplit('`').next().unwrap_or(symbol)
 }
 
 pub(crate) struct WstpKernelClient {
@@ -250,8 +334,10 @@ impl Drop for WstpKernelClient {
 
 fn wstp_user_input_text(input: &str) -> String {
     if input.contains("Input[") || input.contains("InputString[") {
-        WSTP_EVALUATE_USER_INPUT_WL
-            .replace("WOLFRAMCLIINPUTPLACEHOLDER", &wolfram_string_literal(input))
+        wolfram_function_call(
+            WSTP_EVALUATE_USER_INPUT_WL,
+            &[wolfram_string_literal(input)],
+        )
     } else {
         input.to_owned()
     }
@@ -621,6 +707,7 @@ fn debug_text(text: &str) -> String {
 
 fn render_packets(packets: &[KernelPacket], theme: Option<&ThemeHandle>) -> Result<()> {
     let mut output_name: Option<&str> = None;
+    let mut pending_message_identifier: Option<(&str, &str)> = None;
     let mut text_without_trailing_newline = false;
 
     for (index, packet) in packets.iter().enumerate() {
@@ -630,11 +717,15 @@ fn render_packets(packets: &[KernelPacket], theme: Option<&ThemeHandle>) -> Resu
                     text_without_trailing_newline = false;
                     continue;
                 }
-                print_kernel_text(text)?;
+                if let Some((symbol, tag)) = pending_message_identifier.take() {
+                    print_kernel_message_text(text, symbol, tag, theme)?;
+                } else {
+                    print_kernel_text(text)?;
+                }
                 text_without_trailing_newline = !text.ends_with('\n');
             }
             KernelPacket::Message { symbol, tag } => {
-                let _ = (symbol, tag);
+                pending_message_identifier = Some((symbol, tag));
             }
             KernelPacket::OutputName(name) => output_name = Some(name),
             KernelPacket::Return(expr) | KernelPacket::ReturnExpression(expr) => {
@@ -736,7 +827,10 @@ fn wrap_to_string_query(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{KernelPacket, next_input_prompt_after_evaluation, wrap_to_string_query};
+    use super::{
+        KernelPacket, next_input_prompt_after_evaluation, render_message_text_with_color,
+        wrap_to_string_query,
+    };
 
     #[test]
     fn wrap_to_string_query_returns_string_results_unconverted() {
@@ -744,6 +838,62 @@ mod tests {
         assert!(wrapped.contains("StringQ[wolframCliQueryResult$]"));
         assert!(wrapped.contains("ToString[wolframCliQueryResult$, InputForm]"));
         assert!(wrapped.contains("StringJoin[\"a\", \"b\"]"));
+    }
+
+    #[test]
+    fn message_text_renders_short_identifier_red() {
+        let rendered = render_message_text_with_color(
+            "Power::infy: Infinite expression 1/0 encountered.\n",
+            "System`Power",
+            "infy",
+            true,
+        );
+
+        assert_eq!(
+            rendered,
+            format!(
+                "{}: Infinite expression 1/0 encountered.\n",
+                nu_ansi_term::Color::Red.paint("Power::infy")
+            )
+        );
+    }
+
+    #[test]
+    fn message_text_renders_identifier_red_after_layout_prefix() {
+        let rendered = render_message_text_with_color(
+            "                                 1\nPower::infy: Infinite expression - encountered.\n                                 0",
+            "Power",
+            "infy",
+            true,
+        );
+
+        assert_eq!(
+            rendered,
+            format!(
+                "                                 1\n{}: Infinite expression - encountered.\n                                 0",
+                nu_ansi_term::Color::Red.paint("Power::infy")
+            )
+        );
+    }
+
+    #[test]
+    fn message_text_leaves_identifier_plain_when_color_is_disabled() {
+        let text = "General::stop: Further output will be suppressed.\n";
+
+        assert_eq!(
+            render_message_text_with_color(text, "System`General", "stop", false),
+            text
+        );
+    }
+
+    #[test]
+    fn message_text_only_colors_matching_identifier() {
+        let text = "not a message: Power::infy appears later.\n";
+
+        assert_eq!(
+            render_message_text_with_color(text, "System`Power", "infy", true),
+            text
+        );
     }
 
     #[test]

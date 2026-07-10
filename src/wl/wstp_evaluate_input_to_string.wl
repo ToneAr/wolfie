@@ -1,15 +1,24 @@
-Module[{promptedInputString, promptedInput},
-  SetAttributes[{promptedInputString, promptedInput}, HoldAll];
-  promptedInputString[prompt_] := (
-    WriteString[$Output, ToString[Unevaluated[prompt], OutputForm]];
-    InputString[]
-  );
-  promptedInput[prompt_] := ToExpression[promptedInputString[prompt]];
-  ToString[
-    __INPUT_EXPR__ // Replace[{
-      HoldPattern[InputString[prompt_]] :> promptedInputString[prompt],
-      HoldPattern[Input[prompt_]] :> promptedInput[prompt]
-    }],
-    InputForm
-  ]
+Function[
+	{inputExpr},
+	Module[{promptedInputString, promptedInput},
+		SetAttributes[{promptedInputString, promptedInput}, HoldAll];
+		promptedInputString[prompt_] :=
+			(
+				WriteString[$Output, ToString[Unevaluated[prompt], OutputForm]];
+				InputString[]
+			);
+		promptedInput[prompt_] := ToExpression[promptedInputString[prompt]];
+		ToString[
+			Replace[
+				inputExpr,
+				{
+					HoldPattern[InputString[prompt_]] :> promptedInputString[
+						prompt
+					],
+					HoldPattern[Input[prompt_]] :> promptedInput[prompt]
+				}
+			],
+			InputForm
+		]
+	]
 ]

@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "wolfram-cli")]
+#[command(name = "wolfsh")]
 #[command(about = "A friendlier CLI interface for the Wolfram Kernel")]
 struct Args {
     /// Disable Wolfram FrontEnd-backed completions and rendering support.

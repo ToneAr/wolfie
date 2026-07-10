@@ -1,4 +1,12 @@
-Quiet[Check[
-  StringRiffle[ToString /@ First /@ Options[ToExpression[TemplateSlot["slotname"]]], "\n"],
-  ""
-]]
+Function[
+	{head},
+	Quiet[
+		Check[
+			StringRiffle[
+				ToString /@ First /@ Options[ToExpression[head]],
+				"\n"
+			],
+			""
+		]
+	]
+]

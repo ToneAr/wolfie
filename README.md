@@ -1,20 +1,38 @@
-# Wolfram CLI
+# Wolf Shell
 
 ## Installation
 
-Linux/macOS:
+Cross-platform WolframScript installer (requires `wolframscript`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfram-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfsh/main/installers/install.wls -o install.wls
+wolframscript -script install.wls
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/ToneAr/wolfram-cli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/ToneAr/wolfsh/main/installers/install.wls -OutFile install.wls
+wolframscript -script .\install.wls
+```
+
+Platform-specific installers are also available.
+
+Linux/macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfsh/main/installers/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ToneAr/wolfsh/main/installers/install.ps1 | iex
 ```
 
 ## Usage
+
+For a detailed architecture and evaluation pipeline walkthrough, including WSTP packet flow diagrams, see [`docs/WORKFLOW.md`](docs/WORKFLOW.md).
 
 Start the interactive REPL. This uses the native WSTP backend and keeps a kernel session alive for REPL state:
 
@@ -33,8 +51,6 @@ Run a script file through `wolframscript`:
 ```sh
 cargo run -- path/to/script.wls -- arg1 arg2
 ```
-
-
 
 ## Local Rust REPL with evcxr
 
@@ -62,7 +78,7 @@ The REPL opens an IDE-style completion popup dynamically as you type symbol char
 Symbol completions are queried from the active kernel session as you type, so user-defined symbols, functions, and loaded package symbols are included after each evaluation. The query uses prefix-shaped `Names` calls, for example:
 
 ```wl
-Names[prefix <> "*"]
+Names[StringJoin[ prefix, "*"]]
 ```
 
 Matching context names are suggested from `Contexts[]`, and qualified input such as `MyContext`My` queries symbols inside that context.
@@ -117,12 +133,12 @@ GitHub Actions builds packaged binaries when a `v*` or `build*` tag is pushed. `
 
 Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do not include Wolfram and `wstp-sys` links the target WSTP static library during `cargo build`, the workflow extracts the required `CompilerAdditions` from official Wolfram Engine artifacts before building:
 
-| Artifact | Runner | Rust target | WSTP source |
-| --- | --- | --- | --- |
-| `linux-x86_64` | `ubuntu-latest` | `x86_64-unknown-linux-gnu` | Wolfram Engine Docker image |
-| `macos-x86_64` | `macos-15-intel` | `x86_64-apple-darwin` | Wolfram Engine macOS DMG |
-| `macos-aarch64` | `macos-15` | `aarch64-apple-darwin` | Wolfram Engine macOS DMG |
-| `windows-x86_64` | `windows-latest` | `x86_64-pc-windows-msvc` | Wolfram Engine Windows MSI |
+| Artifact         | Runner           | Rust target                | WSTP source                 |
+| ---------------- | ---------------- | -------------------------- | --------------------------- |
+| `linux-x86_64`   | `ubuntu-latest`  | `x86_64-unknown-linux-gnu` | Wolfram Engine Docker image |
+| `macos-x86_64`   | `macos-15-intel` | `x86_64-apple-darwin`      | Wolfram Engine macOS DMG    |
+| `macos-aarch64`  | `macos-15`       | `aarch64-apple-darwin`     | Wolfram Engine macOS DMG    |
+| `windows-x86_64` | `windows-latest` | `x86_64-pc-windows-msvc`   | Wolfram Engine Windows MSI  |
 
 Locally, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` if automatic discovery does not find the target's `SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory. Linux builds also need the system `uuid` library available for linking, for example the `uuid-dev` package on Debian/Ubuntu systems.
 

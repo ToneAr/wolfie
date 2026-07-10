@@ -118,8 +118,8 @@ pub(crate) fn run_repl(enable_frontend: bool) -> Result<()> {
 }
 
 fn print_welcome() {
-    println!("Wolfram CLI");
-    println!("Version: {}", env!("CARGO_PKG_VERSION"));
+    println!("Wolf Shell");
+    println!("TUI Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
 }
 

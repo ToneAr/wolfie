@@ -1,1 +1,1 @@
-WriteString[$Output, ToString[__CODE__, InputForm], "\n"]
+Function[{code}, WriteString[$Output, ToString[code, InputForm], "\n"]]

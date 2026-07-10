@@ -8,7 +8,11 @@ pub(crate) const WSTP_EVALUATE_USER_INPUT_WL: &str = include_str!("wl/wstp_evalu
 
 #[cfg(test)]
 pub(crate) fn wolfram_user_input_evaluation_expr(input: &str) -> String {
-    EVALUATE_USER_INPUT_WL.replace("__INPUT__", &wolfram_string_literal(input))
+    wolfram_function_call(EVALUATE_USER_INPUT_WL, &[wolfram_string_literal(input)])
+}
+
+pub(crate) fn wolfram_function_call(function_source: &str, args: &[String]) -> String {
+    format!("({})[{}]", function_source.trim(), args.join(", "))
 }
 
 pub(crate) fn wolfram_string_literal(value: &str) -> String {
