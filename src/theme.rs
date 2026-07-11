@@ -371,13 +371,17 @@ impl ThemeRegistry {
     }
 }
 
-pub(crate) fn selected_theme(use_color: bool, registry: &ThemeRegistry) -> Theme {
+pub(crate) fn selected_theme(
+    use_color: bool,
+    registry: &ThemeRegistry,
+    configured_theme: Option<&str>,
+) -> Theme {
     if !use_color {
         return Theme::plain();
     }
 
-    load_theme_preference()
-        .and_then(|name| registry.parse(&name))
+    configured_theme
+        .and_then(|name| registry.parse(name))
         .unwrap_or_else(Theme::dark)
 }
 
@@ -485,10 +489,6 @@ pub(crate) fn load_user_config() -> UserConfig {
         return UserConfig::default();
     };
     serde_json::from_str::<UserConfig>(&content).unwrap_or_default()
-}
-
-fn load_theme_preference() -> Option<String> {
-    load_user_config().theme
 }
 
 fn save_theme_preference(theme: &Theme) -> Result<()> {

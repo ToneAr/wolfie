@@ -30,6 +30,7 @@ use crate::{
 
 const BUILTIN_SYMBOLS: &str = include_str!(concat!(env!("OUT_DIR"), "/builtin_symbols.tsv"));
 static BUILTIN_SYMBOL_CACHE: std::sync::OnceLock<Vec<CompletionItem>> = std::sync::OnceLock::new();
+static BUILTIN_SYMBOL_SET: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
 
 #[derive(Clone)]
 /// A cached value tagged with the completion epoch it was produced under, so a
@@ -114,6 +115,21 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> AsyncCache<K, V> {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         entries.insert(key, CacheEntry::Ready(epoch, value));
     }
+
+    pub(crate) fn unclaim_if_pending<Q>(&self, key: &Q, epoch: u64)
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Eq + std::hash::Hash + ?Sized,
+    {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(entries.get(key), Some(CacheEntry::Pending(entry_epoch)) if *entry_epoch == epoch)
+        {
+            entries.remove(key);
+        }
+    }
 }
 
 /// The blocking, kernel-touching half of completion. Calls here can take
@@ -183,42 +199,97 @@ fn spawn_completion_worker(
 ) -> mpsc::Sender<CompletionJob> {
     let (sender, receiver) = mpsc::channel::<CompletionJob>();
     thread::spawn(move || {
-        for job in receiver {
-            match job {
-                CompletionJob::Symbols { prefix, epoch } => {
-                    let start = Instant::now();
-                    let items = backend
-                        .load_symbols_for_prefix(&prefix)
-                        .unwrap_or_else(|err| {
-                            eprintln!(
-                                "warning: symbol completion disabled for {prefix:?}: {err:#}"
-                            );
-                            Vec::new()
-                        });
-                    profile_duration(
-                        "worker.symbols",
-                        start.elapsed(),
-                        format!("prefix={prefix:?} count={}", items.len()),
-                    );
-                    symbols_cache.insert(prefix, epoch, items);
-                }
-                CompletionJob::Options { head, epoch } => {
-                    let start = Instant::now();
-                    let options = backend.load_options(&head).unwrap_or_else(|err| {
-                        eprintln!("warning: option completion disabled for {head}: {err:#}");
-                        Vec::new()
-                    });
-                    profile_duration(
-                        "worker.options",
-                        start.elapsed(),
-                        format!("head={head} count={}", options.len()),
-                    );
-                    options_cache.insert(head, epoch, options);
-                }
+        while let Ok(first_job) = receiver.recv() {
+            for job in
+                coalesced_completion_jobs(first_job, &receiver, &symbols_cache, &options_cache)
+            {
+                process_completion_job(&backend, &symbols_cache, &options_cache, job);
             }
         }
     });
     sender
+}
+
+fn coalesced_completion_jobs(
+    first_job: CompletionJob,
+    receiver: &mpsc::Receiver<CompletionJob>,
+    symbols_cache: &AsyncCache<String, Vec<CompletionItem>>,
+    options_cache: &AsyncCache<String, Vec<String>>,
+) -> Vec<CompletionJob> {
+    let mut jobs = vec![first_job];
+    jobs.extend(receiver.try_iter());
+
+    let latest_symbols = jobs
+        .iter()
+        .rposition(|job| matches!(job, CompletionJob::Symbols { .. }));
+    let latest_options = jobs
+        .iter()
+        .rposition(|job| matches!(job, CompletionJob::Options { .. }));
+    let mut selected = Vec::with_capacity(2);
+
+    for (index, job) in jobs.into_iter().enumerate() {
+        let keep = Some(index) == latest_symbols || Some(index) == latest_options;
+        if keep {
+            selected.push(job);
+        } else {
+            unclaim_completion_job(&job, symbols_cache, options_cache);
+        }
+    }
+
+    selected
+}
+
+fn unclaim_completion_job(
+    job: &CompletionJob,
+    symbols_cache: &AsyncCache<String, Vec<CompletionItem>>,
+    options_cache: &AsyncCache<String, Vec<String>>,
+) {
+    match job {
+        CompletionJob::Symbols { prefix, epoch } => {
+            symbols_cache.unclaim_if_pending(prefix, *epoch);
+        }
+        CompletionJob::Options { head, epoch } => {
+            options_cache.unclaim_if_pending(head, *epoch);
+        }
+    }
+}
+
+fn process_completion_job(
+    backend: &Arc<dyn KernelBackend>,
+    symbols_cache: &AsyncCache<String, Vec<CompletionItem>>,
+    options_cache: &AsyncCache<String, Vec<String>>,
+    job: CompletionJob,
+) {
+    match job {
+        CompletionJob::Symbols { prefix, epoch } => {
+            let start = Instant::now();
+            let items = backend
+                .load_symbols_for_prefix(&prefix)
+                .unwrap_or_else(|err| {
+                    eprintln!("warning: symbol completion disabled for {prefix:?}: {err:#}");
+                    Vec::new()
+                });
+            profile_duration(
+                "worker.symbols",
+                start.elapsed(),
+                format!("prefix={prefix:?} count={}", items.len()),
+            );
+            symbols_cache.insert(prefix, epoch, items);
+        }
+        CompletionJob::Options { head, epoch } => {
+            let start = Instant::now();
+            let options = backend.load_options(&head).unwrap_or_else(|err| {
+                eprintln!("warning: option completion disabled for {head}: {err:#}");
+                Vec::new()
+            });
+            profile_duration(
+                "worker.options",
+                start.elapsed(),
+                format!("head={head} count={}", options.len()),
+            );
+            options_cache.insert(head, epoch, options);
+        }
+    }
 }
 
 fn spawn_completion_detail_worker(
@@ -227,51 +298,93 @@ fn spawn_completion_detail_worker(
 ) -> mpsc::Sender<CompletionDetailJob> {
     let (sender, receiver) = mpsc::channel::<CompletionDetailJob>();
     thread::spawn(move || {
-        for job in receiver {
-            match job {
-                CompletionDetailJob::Details { symbols, epoch } => {
-                    let start = Instant::now();
-                    let count = symbols.len();
-                    match backend.load_symbol_details(&symbols) {
-                        Ok(mut details) => {
-                            profile_duration(
-                                "worker.details",
-                                start.elapsed(),
-                                format!("count={count} ready={}", details.len()),
-                            );
-                            for symbol in symbols {
-                                let entry =
-                                    details.remove(&symbol).unwrap_or(CompletionItemDetails {
-                                        context: None,
-                                        usage: None,
-                                    });
-                                details_cache.insert(symbol, epoch, entry);
-                            }
-                        }
-                        Err(err) => {
-                            profile_duration(
-                                "worker.details.error",
-                                start.elapsed(),
-                                format!("count={count}"),
-                            );
-                            eprintln!("warning: symbol details disabled: {err:#}");
-                            for symbol in symbols {
-                                details_cache.insert(
-                                    symbol,
-                                    epoch,
-                                    CompletionItemDetails {
-                                        context: None,
-                                        usage: None,
-                                    },
-                                );
-                            }
-                        }
+        while let Ok(first_job) = receiver.recv() {
+            let job = coalesced_detail_job(first_job, &receiver, &details_cache);
+            process_detail_job(&backend, &details_cache, job);
+        }
+    });
+    sender
+}
+
+fn coalesced_detail_job(
+    first_job: CompletionDetailJob,
+    receiver: &mpsc::Receiver<CompletionDetailJob>,
+    details_cache: &AsyncCache<String, CompletionItemDetails>,
+) -> CompletionDetailJob {
+    let mut jobs = vec![first_job];
+    jobs.extend(receiver.try_iter());
+    let latest = jobs.len().saturating_sub(1);
+    let mut selected = None;
+
+    for (index, job) in jobs.into_iter().enumerate() {
+        if index == latest {
+            selected = Some(job);
+        } else {
+            unclaim_detail_job(&job, details_cache);
+        }
+    }
+
+    selected.expect("coalesced detail jobs always include the first job")
+}
+
+fn unclaim_detail_job(
+    job: &CompletionDetailJob,
+    details_cache: &AsyncCache<String, CompletionItemDetails>,
+) {
+    match job {
+        CompletionDetailJob::Details { symbols, epoch } => {
+            for symbol in symbols {
+                details_cache.unclaim_if_pending(symbol, *epoch);
+            }
+        }
+    }
+}
+
+fn process_detail_job(
+    backend: &Arc<dyn KernelBackend>,
+    details_cache: &AsyncCache<String, CompletionItemDetails>,
+    job: CompletionDetailJob,
+) {
+    match job {
+        CompletionDetailJob::Details { symbols, epoch } => {
+            let start = Instant::now();
+            let count = symbols.len();
+            match backend.load_symbol_details(&symbols) {
+                Ok(mut details) => {
+                    profile_duration(
+                        "worker.details",
+                        start.elapsed(),
+                        format!("count={count} ready={}", details.len()),
+                    );
+                    for symbol in symbols {
+                        let entry = details.remove(&symbol).unwrap_or(CompletionItemDetails {
+                            context: None,
+                            usage: None,
+                        });
+                        details_cache.insert(symbol, epoch, entry);
+                    }
+                }
+                Err(err) => {
+                    profile_duration(
+                        "worker.details.error",
+                        start.elapsed(),
+                        format!("count={count}"),
+                    );
+                    eprintln!("warning: symbol details disabled: {err:#}");
+                    for symbol in symbols {
+                        details_cache.insert(
+                            symbol,
+                            epoch,
+                            CompletionItemDetails {
+                                context: None,
+                                usage: None,
+                            },
+                        );
                     }
                 }
             }
         }
-    });
-    sender
+    }
 }
 
 pub(crate) struct CompletionSource {
@@ -568,12 +681,13 @@ pub(crate) fn symbol_details_batch_query(symbols: &[String]) -> String {
     wolfram_function_call(SYMBOL_DETAILS_BATCH_QUERY_WL, &[format!("{{{names}}}")])
 }
 
-pub(crate) fn builtin_symbol_names() -> impl Iterator<Item = String> {
-    builtin_symbol_cache()
-        .iter()
-        .map(|item| item.value.clone())
-        .collect::<Vec<_>>()
-        .into_iter()
+pub(crate) fn builtin_symbol_set() -> &'static HashSet<String> {
+    BUILTIN_SYMBOL_SET.get_or_init(|| {
+        builtin_symbol_cache()
+            .iter()
+            .map(|item| item.value.clone())
+            .collect()
+    })
 }
 
 pub(crate) fn builtin_symbol_cache() -> &'static [CompletionItem] {

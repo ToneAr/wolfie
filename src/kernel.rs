@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,
@@ -432,25 +432,31 @@ mod tests {
     }
 }
 
+static KERNEL_PATH: OnceLock<PathBuf> = OnceLock::new();
+
 pub(crate) fn kernel_path() -> Result<PathBuf> {
+    Ok(KERNEL_PATH.get_or_init(discover_kernel_path).clone())
+}
+
+fn discover_kernel_path() -> PathBuf {
     if let Some(path) = env::var_os("WOLFRAM_KERNEL") {
-        return Ok(PathBuf::from(path));
+        return PathBuf::from(path);
     }
 
     if let Ok(install_dir) = wolfram_installation_directory() {
         if let Some(candidate) = native_kernel_path(&install_dir)
             && candidate.exists()
         {
-            return Ok(candidate);
+            return candidate;
         }
 
         let candidate = install_dir.join("Executables").join(kernel_binary_name());
         if candidate.exists() {
-            return Ok(candidate);
+            return candidate;
         }
     }
 
-    Ok(PathBuf::from(kernel_binary_name()))
+    PathBuf::from(kernel_binary_name())
 }
 
 fn native_kernel_path(install_dir: &Path) -> Option<PathBuf> {

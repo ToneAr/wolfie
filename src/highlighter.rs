@@ -12,14 +12,14 @@ use crate::{
 };
 
 pub(crate) struct WolframHighlighter {
-    builtin_symbols: HashSet<String>,
+    builtin_symbols: &'static HashSet<String>,
     user_symbols: Arc<Mutex<HashSet<String>>>,
     theme: ThemeHandle,
 }
 
 impl WolframHighlighter {
     pub(crate) fn new(
-        builtin_symbols: HashSet<String>,
+        builtin_symbols: &'static HashSet<String>,
         user_symbols: Arc<Mutex<HashSet<String>>>,
         theme: ThemeHandle,
     ) -> Self {

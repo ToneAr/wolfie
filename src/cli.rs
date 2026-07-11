@@ -91,7 +91,8 @@ struct EffectiveArgs {
 }
 
 pub(crate) fn run() -> Result<()> {
-    let args = effective_args(parse_args(), load_user_config())?;
+    let config = load_user_config();
+    let args = effective_args(parse_args(), config.clone())?;
 
     let use_color = !args.no_color;
     let link_init_directory = if args.link_init {
@@ -110,7 +111,7 @@ pub(crate) fn run() -> Result<()> {
             args.script_invocation,
             use_color,
         ),
-        (None, None) => run_repl(!args.no_frontend, use_color, connection),
+        (None, None) => run_repl(!args.no_frontend, use_color, connection, config),
         (Some(_), Some(_)) => bail!("use either --eval or a file, not both"),
     };
 

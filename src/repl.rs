@@ -15,7 +15,7 @@ use reedline::{
 
 use crate::{
     commands::{CommandAction, execute_repl_command},
-    completion::{CompletionSource, WolframCompleter, builtin_symbol_names},
+    completion::{CompletionSource, WolframCompleter, builtin_symbol_set},
     editor::{
         HistoryTrigger, WolframPrompt, WolframValidator, completion_edit_mode, completion_menu,
         history_menu, history_path, history_primed_edit_mode,
@@ -28,7 +28,7 @@ use crate::{
         wolfram_versions,
     },
     native_wstp::KernelInputRequest,
-    theme::{ThemeHandle, ThemeRegistry, selected_theme},
+    theme::{ThemeHandle, ThemeRegistry, UserConfig, selected_theme},
     wolfram_syntax::remember_user_symbols,
 };
 
@@ -36,6 +36,7 @@ pub(crate) fn run_repl(
     enable_frontend: bool,
     use_color: bool,
     connection: KernelConnection,
+    config: UserConfig,
 ) -> Result<()> {
     let history = history_path()?;
     let completion_epoch = Arc::new(AtomicU64::new(0));
@@ -50,14 +51,14 @@ pub(crate) fn run_repl(
     spawn_kernel_warmup(kernel.clone());
     print_welcome(use_color, &versions);
     let theme_registry = ThemeRegistry::load();
-    let initial_theme = selected_theme(use_color, &theme_registry);
+    let initial_theme = selected_theme(use_color, &theme_registry, config.theme.as_deref());
     let theme = ThemeHandle::new(initial_theme, theme_registry);
     let completion_source = CompletionSource::new(
         kernel.clone(),
         completion_epoch.clone(),
         user_symbols.clone(),
     );
-    let symbol_set = builtin_symbol_names().collect();
+    let symbol_set = builtin_symbol_set();
     let history_trigger = HistoryTrigger::new();
     let mut line_editor = Reedline::create()
         .use_kitty_keyboard_enhancement(true)
@@ -208,7 +209,7 @@ fn terminal_can_fit_welcome_banner() -> bool {
 }
 
 fn print_plain_welcome(versions: &WolframVersions) {
-    println!("WolframShell");
+    println!("Wolfie");
     println!("TUI Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Wolfram Kernel: {}", versions.kernel);
     println!("WolframScript: {}", versions.wolframscript);
