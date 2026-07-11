@@ -101,7 +101,7 @@ fn render_message_text_with_color(text: &str, symbol: &str, tag: &str, use_color
     };
 
     if use_color {
-        format!("{}{}{}", prefix, Color::Red.paint(identifier), rest)
+        format!("{}{}{}\n", prefix, Color::Red.paint(identifier), rest)
     } else {
         text.to_owned()
     }
@@ -1338,7 +1338,7 @@ mod tests {
     #[test]
     fn message_text_renders_short_identifier_red() {
         let rendered = render_message_text_with_color(
-            "Power::infy: Infinite expression 1/0 encountered.\n",
+            "Power::infy: Infinite expression 1/0 encountered.",
             "System`Power",
             "infy",
             true,
@@ -1356,7 +1356,7 @@ mod tests {
     #[test]
     fn message_text_renders_identifier_red_after_layout_prefix() {
         let rendered = render_message_text_with_color(
-            "                                 1\nPower::infy: Infinite expression - encountered.\n                                 0",
+            "                                 1\nPower::infy: Infinite expression - encountered.                                 0",
             "Power",
             "infy",
             true,
@@ -1365,7 +1365,7 @@ mod tests {
         assert_eq!(
             rendered,
             format!(
-                "                                 1\n{}: Infinite expression - encountered.\n                                 0",
+                "                                 1\n{}: Infinite expression - encountered.                                 0\n",
                 nu_ansi_term::Color::Red.paint("Power::infy")
             )
         );
