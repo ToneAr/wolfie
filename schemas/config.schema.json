@@ -36,6 +36,22 @@
           "description": "Alias for no-color.",
           "type": "boolean"
         },
+        "no-welcome": {
+          "description": "Start the REPL without printing the welcome banner.",
+          "type": "boolean"
+        },
+        "no_welcome": {
+          "description": "Alias for no-welcome.",
+          "type": "boolean"
+        },
+        "no-prompt": {
+          "description": "Disable REPL input/output prompts and the welcome banner.",
+          "type": "boolean"
+        },
+        "no_prompt": {
+          "description": "Alias for no-prompt.",
+          "type": "boolean"
+        },
         "linkconnect": {
           "description": "Connect to an existing WSTP link instead of launching a new kernel.",
           "type": "boolean"
@@ -56,7 +72,7 @@
           "minLength": 1
         },
         "linkoptions": {
-          "description": "WSTP link options integer to use when launching or connecting to a Wolfram Kernel."
+          "description": "WSTP link options integer to use when launching or connecting to a Wolfram Kernel.",
           "type": "integer",
           "minimum": 0,
           "maximum": 4294967295
@@ -94,6 +110,8 @@
       "command": {
         "no-frontend": false,
         "no-color": false,
+        "no-welcome": false,
+        "no-prompt": false,
         "linkconnect": false,
         "linkname": "my-link",
         "linkprotocol": "SharedMemory",

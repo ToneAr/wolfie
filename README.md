@@ -54,6 +54,13 @@ Start the interactive REPL. This uses the native WSTP backend and keeps a kernel
 wolfie
 ```
 
+Use `--no-welcome` to skip the welcome banner while keeping normal input/output prompts, or `--no-prompt` to hide all REPL prompts and the welcome banner:
+
+```sh
+wolfie --no-welcome
+wolfie --no-prompt
+```
+
 Evaluate one expression and exit:
 
 ```sh
@@ -178,7 +185,11 @@ Command completions are available only when the line starts with `:`. Wolfram La
 
 Theme selections made with `:theme` or `:theme {name}` are persisted to the user config file and restored the next time the REPL starts.
 
-CLI defaults can also be set in the same config file. Explicit command-line flags override these defaults where the CLI has a value to override:
+CLI defaults can also be set in the same config file. Explicit command-line flags override these defaults where the CLI has a value to override. To ignore the saved config and use fresh in-memory defaults for only the current session, start Wolfie with `--skip-config`:
+
+```sh
+wolfie --skip-config
+```
 
 ```json
 {
@@ -187,6 +198,8 @@ CLI defaults can also be set in the same config file. Explicit command-line flag
 	"command": {
 		"no-frontend": false,
 		"no-color": false,
+		"no-welcome": false,
+		"no-prompt": false,
 		"linkconnect": false,
 		"linkname": "my-link",
 		"linkprotocol": "SharedMemory",

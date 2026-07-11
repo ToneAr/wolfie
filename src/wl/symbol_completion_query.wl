@@ -10,6 +10,8 @@ Function[
 			contextOf,
 			shortName,
 			isPrivateContext,
+			showsPrivateContext,
+			isVisibleContext,
 			item,
 			items
 		},
@@ -24,6 +26,8 @@ Function[
 				#
 			]&;
 		isPrivateContext = (# === "Private`" || StringEndsQ[#, "`Private`"])&;
+		showsPrivateContext = (isPrivateContext[#] && StringStartsQ[p, #])&;
+		isVisibleContext = (!isPrivateContext[#] || showsPrivateContext[#])&;
 		matchingContexts =
 			Select[contexts, StringStartsQ[#, p] && !isPrivateContext[#]&];
 		currentContextSymbols =
@@ -48,15 +52,15 @@ Function[
 				(StringJoin[ "context\t", #, "\t0\t", #])& /@ matchingContexts,
 				item[#, currentContext]& /@ Select[
 					currentContextSymbols,
-					!isPrivateContext[contextOf[#, currentContext]]&
+					isVisibleContext[contextOf[#, currentContext]]&
 				],
 				item[#, ""]& /@ Select[
 					visibleSymbols,
-					!isPrivateContext[contextOf[#, ""]]&
+					isVisibleContext[contextOf[#, ""]]&
 				],
 				item[#, ""]& /@ Select[
 					rawSymbols,
-					!isPrivateContext[contextOf[#, ""]]&
+					isVisibleContext[contextOf[#, ""]]&
 				]
 			];
 		StringRiffle[Take[DeleteDuplicates[items], UpTo[500]], "\n"]

@@ -14,7 +14,7 @@ use reedline::{
 };
 
 use crate::{
-    commands::{CommandAction, execute_repl_command},
+    commands::{CommandAction, ConfigMode, execute_repl_command},
     completion::{CompletionSource, WolframCompleter, builtin_symbol_set},
     editor::{
         HistoryTrigger, WolframPrompt, WolframValidator, completion_edit_mode, completion_menu,
@@ -35,8 +35,11 @@ use crate::{
 pub(crate) fn run_repl(
     enable_frontend: bool,
     use_color: bool,
+    show_welcome: bool,
+    show_prompts: bool,
     connection: KernelConnection,
     config: UserConfig,
+    config_mode: ConfigMode,
 ) -> Result<()> {
     let history = history_path()?;
     let completion_epoch = Arc::new(AtomicU64::new(0));
@@ -47,12 +50,20 @@ pub(crate) fn run_repl(
     } else {
         None
     };
-    let versions = wolfram_versions();
     spawn_kernel_warmup(kernel.clone());
-    print_welcome(use_color, &versions);
-    let theme_registry = ThemeRegistry::load();
+    if show_welcome {
+        let versions = wolfram_versions();
+        print_welcome(use_color, &versions);
+    }
+    let theme_registry = match config_mode {
+        ConfigMode::User => ThemeRegistry::load(),
+        ConfigMode::Ephemeral => ThemeRegistry::builtin_only(),
+    };
     let initial_theme = selected_theme(use_color, &theme_registry, config.theme.as_deref());
-    let theme = ThemeHandle::new(initial_theme, theme_registry);
+    let theme = match config_mode {
+        ConfigMode::User => ThemeHandle::new(initial_theme, theme_registry),
+        ConfigMode::Ephemeral => ThemeHandle::ephemeral(initial_theme, theme_registry),
+    };
     let completion_source = CompletionSource::new(
         kernel.clone(),
         completion_epoch.clone(),
@@ -91,6 +102,7 @@ pub(crate) fn run_repl(
             kernel_status: kernel_status(&kernel)?,
             _frontend_status: frontend_status(frontend.as_ref())?,
             theme: theme.clone(),
+            show_prompt: show_prompts,
         };
         match line_editor.read_line(&prompt)? {
             Signal::Success(input) => {
@@ -102,7 +114,7 @@ pub(crate) fn run_repl(
                     break;
                 }
                 if input.starts_with(':') {
-                    match execute_repl_command(input, &theme, use_color) {
+                    match execute_repl_command(input, &theme, use_color, config_mode) {
                         CommandAction::Quit => break,
                         CommandAction::OpenHistory => {
                             history_trigger.arm();
@@ -116,13 +128,18 @@ pub(crate) fn run_repl(
                 if may_be_slow {
                     println!(
                         "\n{}: Kernel is starting up",
-                        nu_ansi_term::Color::Yellow.paint("Wolfie::init")
+                        "Wolfie::init"
                     );
                 }
                 let mut kernel_input_handler = |request: &KernelInputRequest| {
-                    read_kernel_input(&mut line_editor, request, theme.clone())
+                    read_kernel_input(&mut line_editor, request, theme.clone(), show_prompts)
                 };
-                kernel.evaluate_repl_input(input, &theme, &mut kernel_input_handler)?;
+                kernel.evaluate_repl_input(
+                    input,
+                    &theme,
+                    &mut kernel_input_handler,
+                    show_prompts,
+                )?;
                 remember_user_symbols(input, &user_symbols);
                 completion_epoch.fetch_add(1, Ordering::Relaxed);
             }
@@ -309,10 +326,12 @@ fn read_kernel_input(
     line_editor: &mut Reedline,
     request: &KernelInputRequest,
     theme: ThemeHandle,
+    show_prompt: bool,
 ) -> Result<Option<String>> {
     let prompt = KernelInputPrompt {
         text: request.prompt.clone(),
         theme,
+        show_prompt,
     };
 
     match line_editor.read_line(&prompt)? {
@@ -325,10 +344,15 @@ fn read_kernel_input(
 struct KernelInputPrompt {
     text: String,
     theme: ThemeHandle,
+    show_prompt: bool,
 }
 
 impl Prompt for KernelInputPrompt {
     fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
+        if !self.show_prompt {
+            return "".into();
+        }
+
         self.theme
             .current()
             .styles()
@@ -347,6 +371,10 @@ impl Prompt for KernelInputPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
+        if !self.show_prompt {
+            return "".into();
+        }
+
         self.theme
             .current()
             .styles()
