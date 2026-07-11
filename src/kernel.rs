@@ -2,7 +2,7 @@ use std::{
     env,
     error::Error,
     ffi::OsString,
-    fmt,
+    fmt, fs,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -19,6 +19,10 @@ use crate::{
     native_wstp,
     profiler::profile_duration,
     theme::{Theme, ThemeHandle},
+    wl::{
+        EVALUATE_SCRIPT_SOURCE_WL, wolfram_function_call, wolfram_string_list,
+        wolfram_string_literal,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -31,6 +35,7 @@ pub(crate) enum KernelConnection {
         link_name: String,
         link_protocol: native_wstp::LinkProtocol,
         link_options: Option<u32>,
+        link_init_directory: Option<PathBuf>,
         link_mode: Option<String>,
     },
 }
@@ -68,23 +73,6 @@ pub(crate) fn lock_kernel(
     kernel
         .lock()
         .map_err(|_| anyhow!("kernel session lock was poisoned"))
-}
-
-pub(crate) fn run_wolframscript_file(file: PathBuf, script_args: Vec<OsString>) -> Result<()> {
-    let status = Command::new("wolframscript")
-        .arg("-file")
-        .arg(file)
-        .args(script_args)
-        .status()
-        .context("failed to launch wolframscript")?;
-
-    if !status.success() {
-        if let Some(code) = status.code() {
-            return Err(KernelExit::new(code).into());
-        }
-        bail!("wolframscript exited with {status}");
-    }
-    Ok(())
 }
 
 pub(crate) fn wolfram_versions() -> WolframVersions {
@@ -134,6 +122,12 @@ pub(crate) struct KernelClient {
     ready: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ScriptInvocation {
+    File,
+    Direct,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum KernelStatus {
     Active,
@@ -179,13 +173,20 @@ impl KernelClient {
                 link_name,
                 link_protocol,
                 link_options,
+                link_init_directory,
                 link_mode,
-            } => native_wstp::WstpKernelClient::connect(
-                &link_name,
-                link_protocol,
-                link_options,
-                link_mode.as_deref(),
-            )?,
+            } => {
+                let mut client = native_wstp::WstpKernelClient::connect(
+                    &link_name,
+                    link_protocol,
+                    link_options,
+                    link_mode.as_deref(),
+                )?;
+                if let Some(directory) = link_init_directory {
+                    client.initialize_current_directory(&directory)?;
+                }
+                client
+            }
         };
 
         Ok(Self {
@@ -197,7 +198,32 @@ impl KernelClient {
 
     pub(crate) fn evaluate_once(&mut self, input: &str, use_color: bool) -> Result<()> {
         let theme = (!use_color).then(|| ThemeHandle::builtin(Theme::plain()));
-        self.evaluate(input, theme.as_ref(), None, false, false)
+        self.evaluate_text(input, theme.as_ref())
+    }
+
+    pub(crate) fn evaluate_file(
+        &mut self,
+        file: &Path,
+        script_args: &[OsString],
+        invocation: ScriptInvocation,
+        use_color: bool,
+    ) -> Result<()> {
+        let source = read_script_source(file)?;
+        let script_command_line = script_command_line(file, script_args)?;
+        let evaluation_environment = script_evaluation_environment(invocation);
+        let input_file_name = script_input_file_name(file)?;
+        let input = wolfram_function_call(
+            EVALUATE_SCRIPT_SOURCE_WL,
+            &[
+                wolfram_string_literal(&source),
+                wolfram_string_list(&script_command_line),
+                evaluation_environment,
+                wolfram_string_literal(&input_file_name),
+            ],
+        );
+        let theme = (!use_color).then(|| ThemeHandle::builtin(Theme::plain()));
+
+        self.evaluate_text(&input, theme.as_ref())
     }
 
     pub(crate) fn status(&self) -> KernelStatus {
@@ -247,6 +273,13 @@ impl KernelClient {
         Ok(())
     }
 
+    fn evaluate_text(&mut self, input: &str, theme: Option<&ThemeHandle>) -> Result<()> {
+        let _activity = ActivityGuard::new(self.active.clone());
+        self.wstp.evaluate_text_once(input, theme)?;
+        self.ready = true;
+        Ok(())
+    }
+
     pub(crate) fn query_lines(&mut self, code: &str) -> Result<Vec<String>> {
         let start = Instant::now();
         let output = self.query_string(code)?;
@@ -275,6 +308,123 @@ impl KernelClient {
             format!("bytes={} code_len={}", output.len(), code.len()),
         );
         Ok(output)
+    }
+}
+
+fn read_script_source(file: &Path) -> Result<String> {
+    let source = fs::read_to_string(file)
+        .with_context(|| format!("failed to read script file {}", file.display()))?;
+    Ok(strip_shebang_preserving_line_numbers(source))
+}
+
+fn strip_shebang_preserving_line_numbers(mut source: String) -> String {
+    if !source.starts_with("#!") {
+        return source;
+    }
+
+    if let Some(newline) = source.find('\n') {
+        source.replace_range(..newline, "");
+        source
+    } else {
+        String::new()
+    }
+}
+
+fn script_command_line(file: &Path, script_args: &[OsString]) -> Result<Vec<String>> {
+    let mut command_line = Vec::with_capacity(script_args.len() + 1);
+    command_line.push(os_string_to_wolfram_string(
+        file.as_os_str(),
+        "script file path",
+    )?);
+    for arg in script_args {
+        command_line.push(os_string_to_wolfram_string(arg, "script argument")?);
+    }
+    Ok(command_line)
+}
+
+fn script_evaluation_environment(invocation: ScriptInvocation) -> String {
+    match invocation {
+        ScriptInvocation::File => "None".to_string(),
+        ScriptInvocation::Direct => wolfram_string_literal("Script"),
+    }
+}
+
+fn script_input_file_name(file: &Path) -> Result<String> {
+    let absolute_file = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        env::current_dir()
+            .context("failed to determine current directory for script input file name")?
+            .join(file)
+    };
+    os_string_to_wolfram_string(absolute_file.as_os_str(), "script input file name")
+}
+
+fn os_string_to_wolfram_string(value: &std::ffi::OsStr, label: &str) -> Result<String> {
+    value
+        .to_str()
+        .map(ToOwned::to_owned)
+        .with_context(|| format!("{label} is not valid UTF-8"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ScriptInvocation, script_command_line, script_evaluation_environment,
+        script_input_file_name, strip_shebang_preserving_line_numbers,
+    };
+    use std::{ffi::OsString, path::Path};
+
+    #[test]
+    fn strips_shebang_without_changing_following_line_numbers() {
+        let source = "#!/usr/bin/wolfie\nx = 2 + 2\n\ny\n".to_string();
+
+        assert_eq!(
+            strip_shebang_preserving_line_numbers(source),
+            "\nx = 2 + 2\n\ny\n"
+        );
+    }
+
+    #[test]
+    fn script_command_line_includes_file_and_script_args() {
+        let command_line = script_command_line(
+            Path::new("script.wl"),
+            &[OsString::from("first"), OsString::from("--second")],
+        )
+        .expect("UTF-8 script command line should convert");
+
+        assert_eq!(
+            command_line,
+            vec![
+                "script.wl".to_string(),
+                "first".to_string(),
+                "--second".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_script_evaluation_environment_is_script() {
+        assert_eq!(
+            script_evaluation_environment(ScriptInvocation::Direct),
+            "\"Script\""
+        );
+    }
+
+    #[test]
+    fn script_input_file_name_is_absolute_script_file_path() {
+        let input_file_name = script_input_file_name(Path::new("/tmp/wolfie/script.wl"))
+            .expect("absolute script path should convert");
+
+        assert_eq!(input_file_name, "/tmp/wolfie/script.wl");
+    }
+
+    #[test]
+    fn file_script_evaluation_environment_is_not_overridden() {
+        assert_eq!(
+            script_evaluation_environment(ScriptInvocation::File),
+            "None"
+        );
     }
 }
 

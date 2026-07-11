@@ -146,14 +146,19 @@ fn invokes_wolfram_files_as_immediate_function_calls() {
 fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     let query = symbol_completion_query("LP");
     let compact_query = query.split_whitespace().collect::<String>();
+    assert!(compact_query.contains("currentContext=$Context"));
+    assert!(compact_query.contains("Names[StringJoin[currentContext,p,\"*\"]]"));
+    assert!(compact_query.contains("Names[StringJoin[p,\"*\"]]"));
     assert!(compact_query.contains("Names[StringJoin[\"*`\",p,\"*\"]]"));
-    assert!(compact_query.contains("StringJoin[p,\"*\"]"));
-    assert!(compact_query.contains("DeleteDuplicates[Join["));
+    assert!(compact_query.contains("item[#,currentContext]&/@"));
+    assert!(compact_query.contains("item[#,\"\"]&/@"));
+    assert!(compact_query.contains("DeleteDuplicates[items]"));
     assert!(query.contains("Contexts[]"));
     assert!(query.contains("matchingContexts"));
     assert!(query.contains("StringStartsQ[#, p]"));
     assert!(query.contains("isPrivateContext"));
-    assert!(query.contains("contextOf[name_]"));
+    assert!(query.contains("contextOf"));
+    assert!(query.contains("StringReplace[#1"));
     assert!(!query.contains("ToExpression"));
     assert!(!query.contains("WolframLanguageData"));
     // Usage messages are the expensive part of a completion query (many
@@ -1008,7 +1013,7 @@ fn kernel_contexts_complete_for_unqualified_prefixes() {
     wait_until(|| {
         completer
             .source
-            .symbols_for_prefix("MyC")
+            .symbols_for_prefix_wait("MyC", Duration::ZERO)
             .iter()
             .any(|item| item.value == "MyContext`")
     });
@@ -1023,7 +1028,7 @@ fn kernel_contexts_complete_for_unqualified_prefixes() {
 }
 
 #[test]
-fn kernel_symbols_inside_contexts_complete_after_context_prefix() {
+fn kernel_symbols_inside_contexts_complete_on_backtick_keystroke() {
     let backend = FakeBackend {
         symbols: HashMap::from([(
             "MyContext`".to_string(),
@@ -1035,7 +1040,7 @@ fn kernel_symbols_inside_contexts_complete_after_context_prefix() {
             }],
         )]),
         details: HashMap::new(),
-        delay: Duration::ZERO,
+        delay: Duration::from_millis(20),
         details_delay: Duration::ZERO,
     };
     let source = CompletionSource::with_backend(
@@ -1044,15 +1049,6 @@ fn kernel_symbols_inside_contexts_complete_after_context_prefix() {
         test_user_symbols(),
     );
     let mut completer = WolframCompleter::new(source, ThemeHandle::builtin(Theme::dark()));
-
-    let _ = completer.complete("MyContext`", 10);
-    wait_until(|| {
-        completer
-            .source
-            .symbols_for_prefix("MyContext`")
-            .iter()
-            .any(|item| item.value == "foo")
-    });
 
     let suggestions = completer.complete("MyContext`", 10);
 
@@ -1188,6 +1184,40 @@ fn completion_never_blocks_on_a_slow_kernel_backend() {
 }
 
 #[test]
+fn context_delimiter_completion_wait_is_bounded_for_slow_kernel_backend() {
+    let backend = FakeBackend {
+        symbols: HashMap::from([(
+            "SlowContext`".to_string(),
+            vec![CompletionItem {
+                value: "foo".to_string(),
+                kind: CompletionKind::Symbol,
+                frequency: None,
+                context: Some("SlowContext`".to_string()),
+            }],
+        )]),
+        details: HashMap::new(),
+        delay: Duration::from_secs(2),
+        details_delay: Duration::ZERO,
+    };
+    let source = CompletionSource::with_backend(
+        Arc::new(backend),
+        Arc::new(AtomicU64::new(0)),
+        test_user_symbols(),
+    );
+    let mut completer = WolframCompleter::new(source, ThemeHandle::builtin(Theme::dark()));
+
+    let start = Instant::now();
+    let suggestions = completer.complete("SlowContext`", 12);
+    let elapsed = start.elapsed();
+
+    assert!(suggestions.is_empty());
+    assert!(
+        elapsed < CONTEXT_COMPLETION_WAIT + Duration::from_millis(150),
+        "context completion wait should be bounded, but took {elapsed:?}"
+    );
+}
+
+#[test]
 fn async_cache_poll_does_not_block_when_locked() {
     let cache: AsyncCache<String, i32> = AsyncCache::new();
     let _guard = cache
@@ -1229,11 +1259,15 @@ fn slow_usage_details_do_not_starve_symbol_completion() {
     );
 
     assert!(source.usage_details(&["SlowUsage".to_string()]).is_empty());
-    assert!(source.symbols_for_prefix("Private`yy").is_empty());
+    assert!(
+        source
+            .symbols_for_prefix_wait("Private`yy", Duration::ZERO)
+            .is_empty()
+    );
 
     wait_until(|| {
         source
-            .symbols_for_prefix("Private`yy")
+            .symbols_for_prefix_wait("Private`yy", Duration::ZERO)
             .iter()
             .any(|item| item.value == "yyFast")
     });

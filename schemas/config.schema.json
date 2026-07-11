@@ -51,15 +51,19 @@
           "pattern": "^([Ii][Nn][Tt][Rr][Aa][Pp][Rr][Oo][Cc][Ee][Ss][Ss]|[Ss][Hh][Aa][Rr][Ee][Dd][Mm][Ee][Mm][Oo][Rr][Yy]|[Tt][Cc][Pp][Ii][Pp])$"
         },
         "linkmode": {
-          "description": "WSTP link mode to pass to a launched Wolfram Kernel.",
+          "description": "WSTP link mode to use when launching or connecting to a Wolfram Kernel.",
           "type": "string",
           "minLength": 1
         },
         "linkoptions": {
-          "description": "WSTP link options integer to pass to a launched Wolfram Kernel.",
+          "description": "WSTP link options integer to use when launching or connecting to a Wolfram Kernel."
           "type": "integer",
           "minimum": 0,
           "maximum": 4294967295
+        },
+        "linkinit": {
+          "description": "When linkconnect is used with linkoptions 4, initialize the connected kernel by setting its current directory to wolfie's launch directory.",
+          "type": "boolean"
         }
       },
       "allOf": [
@@ -94,7 +98,8 @@
         "linkname": "my-link",
         "linkprotocol": "SharedMemory",
         "linkmode": "Listen",
-        "linkoptions": 4
+        "linkoptions": 4,
+        "linkinit": false
       }
     }
   ]

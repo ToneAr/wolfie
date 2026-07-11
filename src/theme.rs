@@ -459,6 +459,8 @@ pub(crate) struct CommandConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) linkoptions: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) linkinit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) linkmode: Option<String>,
 }
 
@@ -470,6 +472,7 @@ impl CommandConfig {
             && self.linkname.is_none()
             && self.linkprotocol.is_none()
             && self.linkoptions.is_none()
+            && self.linkinit.is_none()
             && self.linkmode.is_none()
     }
 }
@@ -1002,10 +1005,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = env::temp_dir().join(format!(
-            "wolfie-theme-test-{}-{unique}",
-            std::process::id()
-        ));
+        let dir =
+            env::temp_dir().join(format!("wolfie-theme-test-{}-{unique}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         fs::write(&path, content).unwrap();

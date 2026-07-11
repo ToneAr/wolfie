@@ -2,52 +2,63 @@ Function[
 	{p},
 	Module[{
 			contexts = Contexts[],
+			currentContext = $Context,
 			matchingContexts,
+			currentContextSymbols,
+			visibleSymbols,
 			rawSymbols,
-			symbols,
 			contextOf,
 			shortName,
 			isPrivateContext,
-			item
+			item,
+			items
 		},
-		contextOf[name_] :=
-			If[StringContainsQ[name, "`"],
-				StringReplace[name, RegularExpression["^(.*`).*$"] -> "$1"],
-				""
-			];
-		shortName[name_] :=
-			If[StringContainsQ[name, "`"],
-				StringReplace[name, RegularExpression["^.*`"] -> ""],
-				name
-			];
-		isPrivateContext[context_] :=
-			context === "Private`" || StringEndsQ[context, "`Private`"];
+		contextOf =
+			If[StringContainsQ[#1, "`"],
+				StringReplace[#1, RegularExpression["^(.*`).*$"] -> "$1"],
+				#2
+			]&;
+		shortName =
+			If[StringContainsQ[#, "`"],
+				StringReplace[#, RegularExpression["^.*`"] -> ""],
+				#
+			]&;
+		isPrivateContext = (# === "Private`" || StringEndsQ[#, "`Private`"])&;
 		matchingContexts =
 			Select[contexts, StringStartsQ[#, p] && !isPrivateContext[#]&];
+		currentContextSymbols =
+			If[StringContainsQ[p, "`"],
+				{},
+				Names[StringJoin[ currentContext, p, "*"]]
+			];
+		visibleSymbols =
+			If[StringContainsQ[p, "`"], {}, Names[StringJoin[ p, "*"]]];
 		rawSymbols =
 			If[StringContainsQ[p, "`"],
 				Names[StringJoin[ p, "*"]],
 				Names[StringJoin[ "*`", p, "*"]]
 			];
-		symbols = Select[rawSymbols, !isPrivateContext[contextOf[#]]&];
-		item[name_] :=
+		item =
 			StringRiffle[
-				{"symbol", shortName[name], "0", contextOf[name]},
+				{"symbol", shortName[#1], "0", contextOf[#1, #2]},
 				"\t"
-			];
-		StringRiffle[
-			Take[
-				DeleteDuplicates[
-					Join[
-						(
-							StringJoin[ "context\t", #, "\t0\t", #]
-						)& /@ matchingContexts,
-						item /@ symbols
-					]
+			]&;
+		items =
+			Join[
+				(StringJoin[ "context\t", #, "\t0\t", #])& /@ matchingContexts,
+				item[#, currentContext]& /@ Select[
+					currentContextSymbols,
+					!isPrivateContext[contextOf[#, currentContext]]&
 				],
-				UpTo[500]
-			],
-			"\n"
-		]
+				item[#, ""]& /@ Select[
+					visibleSymbols,
+					!isPrivateContext[contextOf[#, ""]]&
+				],
+				item[#, ""]& /@ Select[
+					rawSymbols,
+					!isPrivateContext[contextOf[#, ""]]&
+				]
+			];
+		StringRiffle[Take[DeleteDuplicates[items], UpTo[500]], "\n"]
 	]
 ]

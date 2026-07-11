@@ -1,5 +1,6 @@
 use std::{
     io::{self, Write},
+    path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
@@ -169,6 +170,7 @@ pub(crate) struct WstpKernelClient {
     link: Option<Link>,
     input_prompt: Option<String>,
     initial_prompt_pending: bool,
+    pending_current_directory: Option<PathBuf>,
 }
 
 impl WstpKernelClient {
@@ -203,6 +205,7 @@ impl WstpKernelClient {
             link: Some(link),
             input_prompt: None,
             initial_prompt_pending: true,
+            pending_current_directory: None,
         })
     }
 
@@ -237,6 +240,7 @@ impl WstpKernelClient {
             link: Some(link),
             input_prompt: None,
             initial_prompt_pending: true,
+            pending_current_directory: None,
         })
     }
 
@@ -264,6 +268,22 @@ impl WstpKernelClient {
             self.input_prompt = Some(input_prompt);
         }
         Ok(())
+    }
+
+    pub(crate) fn evaluate_text_once(
+        &mut self,
+        input: &str,
+        theme: Option<&ThemeHandle>,
+    ) -> Result<()> {
+        let packets = self.evaluate_text_packets(input)?;
+        render_packets(
+            &packets,
+            theme,
+            PacketRenderOptions {
+                separate_input_and_output: false,
+                show_output_prompt: false,
+            },
+        )
     }
 
     pub(crate) fn input_prompt(&self) -> Option<&str> {
@@ -301,6 +321,12 @@ impl WstpKernelClient {
         self.evaluate_packet_to_string(&expr)
     }
 
+    pub(crate) fn initialize_current_directory(&mut self, directory: &Path) -> Result<()> {
+        self.pending_current_directory = Some(directory.to_path_buf());
+        profile_event(format!("wstp.linkinit.queued\tdirectory={directory:?}"));
+        Ok(())
+    }
+
     fn evaluate_input_packets(
         &mut self,
         input: &str,
@@ -309,8 +335,8 @@ impl WstpKernelClient {
         self.ensure_initial_prompt_read()?;
         interrupt::clear_kernel_interrupt_request();
         let start = Instant::now();
+        let input = self.user_input_text_with_pending_initialization(input)?;
         let link = self.link.as_mut().context("WSTP link is closed")?;
-        let input = wstp_user_input_text(input);
         put_enter_text_packet(link, &input)?;
         profile_duration("wstp.enter_text.sent", start.elapsed(), "");
 
@@ -361,6 +387,47 @@ impl WstpKernelClient {
         Ok(text)
     }
 
+    fn evaluate_text_packets(&mut self, input: &str) -> Result<Vec<KernelPacket>> {
+        self.ensure_initial_prompt_read()?;
+        interrupt::clear_kernel_interrupt_request();
+        let start = Instant::now();
+        let input = self.user_input_text_with_pending_initialization(input)?;
+        let wrapped = plain_text_result_input(&input);
+        let expr = call("System`ToExpression", vec![Expr::string(&wrapped)]);
+        let link = self.link.as_mut().context("WSTP link is closed")?;
+        link.put_eval_packet(&expr)
+            .map_err(|err| anyhow!("failed to send WSTP EvaluatePacket: {err:?}"))?;
+        link.flush()
+            .map_err(|err| anyhow!("failed to flush WSTP link: {err:?}"))?;
+        profile_duration("wstp.eval_text.sent", start.elapsed(), "");
+
+        let packets = read_packets_until_return(
+            link,
+            &mut self.process,
+            None,
+            false,
+            "WSTP EvaluatePacket text evaluation",
+        )?;
+        let output_bytes = packet_output_bytes(&packets);
+        profile_duration(
+            "wstp.eval_text.total",
+            start.elapsed(),
+            format!("bytes={output_bytes}"),
+        );
+        Ok(packets)
+    }
+
+    fn user_input_text_with_pending_initialization(&mut self, input: &str) -> Result<String> {
+        let input = wstp_user_input_text(input);
+        let Some(directory) = self.pending_current_directory.take() else {
+            return Ok(input);
+        };
+        let directory = directory.to_str().with_context(|| {
+            format!("cannot initialize Wolfram kernel directory from non-UTF-8 path {directory:?}")
+        })?;
+        Ok(format!("{}; {input}", set_directory_expression(directory)))
+    }
+
     fn child_exit_code_after_link_error(process: &mut KernelProcess) -> Option<i32> {
         let KernelProcess::Launched(process) = process else {
             return None;
@@ -393,12 +460,14 @@ impl WstpKernelClient {
                 let _ = process.wait();
             }
             KernelProcess::External => {
-                if let Some(link) = self.link.take() {
-                    std::mem::forget(link);
-                }
+                drop(self.link.take());
             }
         }
     }
+}
+
+fn set_directory_expression(directory: &str) -> String {
+    format!("SetDirectory[{}]; Null", wolfram_string_literal(directory))
 }
 
 fn connect_link(
@@ -474,6 +543,25 @@ fn wstp_user_input_text(input: &str) -> String {
     } else {
         input.to_owned()
     }
+}
+
+fn plain_text_result_input(input: &str) -> String {
+    wolfram_function_call(
+        r#"
+Function[
+    {input},
+    Module[{result},
+        Internal`WithLocalSettings[
+            Off[General::shdw],
+            result = ReleaseHold[ToExpression[input, InputForm, HoldComplete]],
+            On[General::shdw]
+        ];
+        If[StringQ[result], result, ToString[result, OutputForm, PageWidth -> Infinity]]
+    ]
+]
+"#,
+        &[wolfram_string_literal(input)],
+    )
 }
 
 fn put_enter_text_packet(link: &mut Link, input: &str) -> Result<()> {
@@ -565,9 +653,15 @@ fn read_packets_until_return(
 }
 
 fn next_packet_id(link: &mut Link, process: &mut KernelProcess, operation: &str) -> Result<i32> {
+    let wait_start = Instant::now();
     wait_for_packet_activity(link, process, operation)?;
+    profile_duration("wstp.packet.wait", wait_start.elapsed(), operation);
+    let next_start = Instant::now();
     match link.raw_next_packet() {
-        Ok(packet_id) => Ok(packet_id),
+        Ok(packet_id) => {
+            profile_duration("wstp.packet.next", next_start.elapsed(), operation);
+            Ok(packet_id)
+        }
         Err(err) => {
             if let Some(code) = WstpKernelClient::child_exit_code_after_link_error(process) {
                 return Err(KernelExit::new(code).into());
@@ -582,6 +676,10 @@ fn wait_for_packet_activity(
     process: &mut KernelProcess,
     operation: &str,
 ) -> Result<()> {
+    if matches!(process, KernelProcess::External) {
+        return Ok(());
+    }
+
     while !link.is_ready() {
         if let KernelProcess::Launched(process) = process
             && let Some(status) = process
@@ -1105,8 +1203,9 @@ fn wrap_to_string_query(input: &str) -> String {
 mod tests {
     use super::{
         KernelExit, KernelPacket, configure_kernel_launch_command, connect_link_args,
-        kernel_exit_result, next_input_prompt_after_evaluation, render_message_text_with_color,
-        render_output_name_with_color, rendered_return_text, wrap_to_string_query,
+        kernel_exit_result, next_input_prompt_after_evaluation, plain_text_result_input,
+        render_message_text_with_color, render_output_name_with_color, rendered_return_text,
+        set_directory_expression, wrap_to_string_query,
     };
     use std::process::{Command, ExitStatus};
 
@@ -1145,6 +1244,23 @@ mod tests {
         assert!(wrapped.contains("StringQ[wolframCliQueryResult$]"));
         assert!(wrapped.contains("ToString[wolframCliQueryResult$, InputForm]"));
         assert!(wrapped.contains("StringJoin[\"a\", \"b\"]"));
+    }
+
+    #[test]
+    fn plain_text_result_input_returns_strings_unconverted_and_disables_page_wrapping() {
+        let wrapped = plain_text_result_input("$InputFileName");
+
+        assert!(wrapped.contains("StringQ[result]"));
+        assert!(wrapped.contains("ToString[result, OutputForm, PageWidth -> Infinity]"));
+        assert!(wrapped.contains("$InputFileName"));
+    }
+
+    #[test]
+    fn set_directory_expression_escapes_directory_path() {
+        assert_eq!(
+            set_directory_expression("/tmp/wolfie \"project\""),
+            "SetDirectory[\"/tmp/wolfie \\\"project\\\"\"]; Null"
+        );
     }
 
     #[test]

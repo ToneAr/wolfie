@@ -1,10 +1,14 @@
 # Wolfie - **Wol**_fram_ **f**_riendly_ **i**_nteractive_ _sh_**e**_ll_
 
-![logo](docs/img/logo.png)
+![logo](docs/img/logo.gif)
 
-`wolfie` is a Rust CLI for running Wolfram Language from the terminal with a WSTP-backed REPL, one-shot expression evaluation, script delegation through `wolframscript`, and dynamic completions.
+`wolfie` is a Rust CLI for running Wolfram Language from the terminal with a
+WSTP-backed REPL, one-shot expression evaluation, script execution, and dynamic
+completions.
 
-It does not intent to replace wolframscript for script/file evaluation and is intended only as a more user friendly terminal REPL.
+Script execution runs through the same WSTP connection machinery as expression
+and REPL evaluation, so it can use `--linkconnect` setups for persistent
+kernels.
 
 The TUI is self contained within the single `wolfie` binary and does not bundle the Wolfram Kernel.
 
@@ -36,11 +40,11 @@ irm https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/install.ps1 
 
 `wolfie` has three user-facing execution modes:
 
-| Mode                | Command                     | Backend                      |
-| ------------------- | --------------------------- | ---------------------------- |
-| Interactive REPL    | `wolfie` or `cargo run`     | Native WSTP session          |
-| One-shot expression | `wolfie -e 'Range[5]^2'`    | Native WSTP session          |
-| Script file         | `wolfie script.wls -- arg1` | Delegated to `wolframscript` |
+| Mode                | Command                          | Backend             |
+| ------------------- | -------------------------------- | ------------------- |
+| Interactive REPL    | `wolfie` or `cargo run`          | Native WSTP session |
+| One-shot expression | `wolfie -e 'Range[5]^2'`         | Native WSTP session |
+| Script file         | `wolfie --file script.wls -- a1` | Native WSTP session |
 
 For a detailed architecture and evaluation pipeline walkthrough, including WSTP packet flow diagrams, see [`docs/Architecture.md`](docs/Architecture.md).
 
@@ -63,21 +67,40 @@ wolfie --linkmode Listen --linkoptions 4
 wolfie --linkmode Listen --linkoptions 4 -e 'Range[5]^2'
 ```
 
-Connect to an existing WSTP link for the REPL or one-shot evaluation instead of launching a new kernel. The link protocol defaults to `SharedMemory`; pass `--linkprotocol` for `TCPIP` or `IntraProcess` links:
+Connect to an existing WSTP link for the REPL, one-shot evaluation, or script
+execution instead of launching a new kernel. The link protocol defaults to
+`SharedMemory`; pass `--linkprotocol` for `TCPIP` or `IntraProcess` links:
 
 ```sh
 wolfie --linkconnect --linkname my-link
 wolfie --linkconnect --linkname my-link --linkprotocol TCPIP
+wolfie --linkconnect --linkname my-link --linkoptions 4 --linkinit
 wolfie --linkconnect --linkname my-link -e 'Range[5]^2'
+wolfie --linkconnect --linkname my-link --file script.wls
 ```
 
-Run a script file through `wolframscript` **[WIP]**:
+Run a script file over WSTP:
 
 ```sh
-wolfie path/to/script.wls -- arg1 arg2
+wolfie --file path/to/script.wls -- arg1 arg2
+wolfie -f path/to/script.wls -- arg1 arg2
 ```
 
-However, all non-interactive script execution should be defer back to `wolframscript`.
+On Unix-like systems, `wolfie` can also be used directly as a shebang evaluator:
+
+```wl
+#!/usr/bin/wolfie
+x = 2 + 2
+
+y = x + 10
+
+y
+```
+
+The script source is split into top-level Wolfram Language expressions by the
+kernel reader and evaluated sequentially in one WSTP session. Only the final
+expression result is returned, while earlier expressions share state with later
+ones.
 
 ## TL;DR
 
@@ -168,14 +191,15 @@ CLI defaults can also be set in the same config file. Explicit command-line flag
 		"linkname": "my-link",
 		"linkprotocol": "SharedMemory",
 		"linkmode": "Listen",
-		"linkoptions": 4
+		"linkoptions": 4,
+		"linkinit": false
 	}
-wolfie}
+}
 ```
 
 The JSON schema for this file is available at [`schemas/config.schema.json`](schemas/config.schema.json).
 
-`linkprotocol` accepts `SharedMemory`, `TCPIP`, or `IntraProcess`. `linkmode` and `linkoptions` are passed to the WSTP link when connecting to an existing kernel, and to the launched kernel command when `wolfie` starts the kernel.
+`linkprotocol` accepts `SharedMemory`, `TCPIP`, or `IntraProcess`. `linkmode` and `linkoptions` are passed to the WSTP link when connecting to an existing kernel, and to the launched kernel command when `wolfie` starts the kernel. With `--linkconnect --linkoptions 4`, `--linkinit` initializes the connected kernel by setting its current directory to the directory where `wolfie` was launched. For config-based link connections, set `"linkinit": true`; `"linkconnect": true` alone does not enable directory initialization.
 
 Default user paths:
 
@@ -242,7 +266,9 @@ Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do no
 
 Locally, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` if automatic discovery does not find the target's `SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory. Linux builds also need the system `uuid` library available for linking, for example the `uuid-dev` package on Debian/Ubuntu systems.
 
-The packaged binary locates the user's Wolfram installation at runtime using the discovery behavior above. Expression, REPL, and completion evaluation run over WSTP; script files are delegated to `wolframscript`.
+The packaged binary locates the user's Wolfram installation at runtime using the
+discovery behavior above. Expression, REPL, completion, and script-file
+evaluation run over WSTP.
 
 ## Regenerating build-time kernel data
 

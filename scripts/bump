@@ -7,7 +7,8 @@ SetOptions[CL,
 		"$1" -> _String -> Automatic
 	},
 	"LogToFile" -> False
-]
+];
+
 Enclose[
 	HERE = DirectoryName @ $InputFileName;
 	cargoFile = FileNameJoin[{ParentDirectory @ HERE, "Cargo.toml"}];

@@ -8,9 +8,12 @@ This document describes how `wolfie` starts, evaluates Wolfram Language input, t
 
 1. Interactive REPL, the default `wolfie` / `cargo run` path.
 2. One-shot expression evaluation with `--eval` / `-e`.
-3. Script execution by delegating a file to `wolframscript -file`.
+3. Script execution with `--file` / `-f`.
 
-Interactive and one-shot expression evaluation both require the native WSTP backend. Script files are intentionally delegated to `wolframscript` instead of being run through the persistent WSTP session.
+All three execution modes use the native WSTP backend. Script files are read by
+`wolfie`, sent over the selected WSTP connection, split into top-level Wolfram
+Language expressions by the kernel reader, and evaluated sequentially in that
+session.
 
 ```mermaid
 flowchart TD
@@ -20,11 +23,12 @@ flowchart TD
     Args --> EvalMode{Mode}
     EvalMode -->|no args| Repl[src/repl.rs]
     EvalMode -->|-e or --eval| OneShot[KernelClient::evaluate_once]
-    EvalMode -->|file path| Script[run_wolframscript_file]
+    EvalMode -->|--file or -f| Script[KernelClient::evaluate_file]
 
     Repl --> Reedline[reedline editor]
     Reedline --> KernelShared[Shared KernelClient]
     OneShot --> KernelShared
+    Script --> KernelShared
 
     KernelShared --> NativeWstp[src/native_wstp.rs]
     NativeWstp --> WstpLink[WSTP shared-memory link]
@@ -32,9 +36,6 @@ flowchart TD
 
     Reedline --> Completion[completion worker and cache]
     Completion --> KernelShared
-
-    Script --> WolframScript[wolframscript -file]
-    WolframScript --> KernelScript[Wolfram runtime selected by wolframscript]
 ```
 
 ## Startup and mode selection
@@ -47,7 +48,7 @@ flowchart TD
     Run --> Parse[clap parses Args]
     Parse --> Branch{eval, file}
     Branch -->|eval present, file absent| Eval[KernelClient::new then evaluate_once]
-    Branch -->|file present, eval absent| File[run_wolframscript_file]
+    Branch -->|file present, eval absent| File[KernelClient::new then evaluate_file]
     Branch -->|neither present| Repl[run_repl]
     Branch -->|both present| Error[bail: use either --eval or file]
 
@@ -58,11 +59,11 @@ flowchart TD
 
 ### CLI modes
 
-| Mode                | User command                | Runtime path                          | Kernel lifetime                 | Backend                               |
-| ------------------- | --------------------------- | ------------------------------------- | ------------------------------- | ------------------------------------- |
-| REPL                | `wolfie`                    | `run_repl`                            | Persistent until quit           | WSTP                                  |
-| One-shot expression | `wolfie -e 'Range[5]^2'`    | `KernelClient::evaluate_once`         | One process for that evaluation | WSTP                                  |
-| Script file         | `wolfie script.wls -- arg1` | `wolframscript -file script.wls arg1` | Managed by `wolframscript`      | `wolframscript`, not this WSTP client |
+| Mode                | User command                       | Runtime path                  | Kernel lifetime                 | Backend |
+| ------------------- | ---------------------------------- | ----------------------------- | ------------------------------- | ------- |
+| REPL                | `wolfie`                           | `run_repl`                    | Persistent until quit           | WSTP    |
+| One-shot expression | `wolfie -e 'Range[5]^2'`           | `KernelClient::evaluate_once` | One process for that evaluation | WSTP    |
+| Script file         | `wolfie --file script.wls -- arg1` | `KernelClient::evaluate_file` | One process for that script     | WSTP    |
 
 ## Kernel discovery
 

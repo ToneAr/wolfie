@@ -8,7 +8,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -86,6 +86,24 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> AsyncCache<K, V> {
                 entries.insert(key.clone(), CacheEntry::Pending(epoch));
                 CachePoll::Spawn
             }
+        }
+    }
+
+    pub(crate) fn ready<Q>(&self, key: &Q, epoch: u64) -> Option<V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Eq + std::hash::Hash + ?Sized,
+    {
+        let entries = match self.entries.try_lock() {
+            Ok(entries) => entries,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        match entries.get(key) {
+            Some(CacheEntry::Ready(entry_epoch, value)) if *entry_epoch == epoch => {
+                Some(value.clone())
+            }
+            _ => None,
         }
     }
 
@@ -307,9 +325,14 @@ impl CompletionSource {
 
     /// Never touches the kernel directly. Built-ins resolve locally and
     /// instantly; kernel-sourced names for a not-yet-seen prefix are fetched on
-    /// the background worker and simply aren't included until a later call
-    /// (typically the next keystroke) finds them cached.
-    pub(crate) fn symbols_for_prefix(&self, prefix: &str) -> Vec<CompletionItem> {
+    /// the background worker. `wait_timeout` can be non-zero for explicit
+    /// context delimiters such as `MyPackage`` so the menu can populate on the
+    /// same keystroke without making normal typing synchronous.
+    pub(crate) fn symbols_for_prefix_wait(
+        &self,
+        prefix: &str,
+        wait_timeout: Duration,
+    ) -> Vec<CompletionItem> {
         let start = Instant::now();
         if !is_qualified_symbol_name(prefix) {
             return Vec::new();
@@ -332,13 +355,13 @@ impl CompletionSource {
         items.extend(
             match self.symbols_cache.poll_or_claim(&query_prefix, epoch) {
                 CachePoll::Ready(items) => items,
-                CachePoll::Pending => Vec::new(),
+                CachePoll::Pending => self.wait_for_symbols(&query_prefix, epoch, wait_timeout),
                 CachePoll::Spawn => {
                     let _ = self.job_sender.send(CompletionJob::Symbols {
                         prefix: query_prefix.clone(),
                         epoch,
                     });
-                    Vec::new()
+                    self.wait_for_symbols(&query_prefix, epoch, wait_timeout)
                 }
             },
         );
@@ -367,6 +390,31 @@ impl CompletionSource {
             format!("prefix={prefix:?} count={}", items.len()),
         );
         items
+    }
+
+    fn wait_for_symbols(
+        &self,
+        query_prefix: &str,
+        epoch: u64,
+        wait_timeout: Duration,
+    ) -> Vec<CompletionItem> {
+        if wait_timeout.is_zero() {
+            return Vec::new();
+        }
+
+        let deadline = Instant::now() + wait_timeout;
+        loop {
+            if let Some(items) = self.symbols_cache.ready(query_prefix, epoch) {
+                return items;
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return Vec::new();
+            }
+
+            thread::sleep(Duration::from_millis(2).min(deadline - now));
+        }
     }
 
     pub(crate) fn local_user_symbols_for_prefix(&self, prefix: &str) -> Vec<CompletionItem> {
@@ -684,7 +732,12 @@ impl Completer for WolframCompleter {
         let mut suggestions = Vec::new();
 
         let symbols_start = Instant::now();
-        let symbols = self.source.symbols_for_prefix(prefix);
+        let symbol_wait = if prefix.ends_with('`') {
+            CONTEXT_COMPLETION_WAIT
+        } else {
+            Duration::ZERO
+        };
+        let symbols = self.source.symbols_for_prefix_wait(prefix, symbol_wait);
         profile_duration(
             "complete.load_symbols",
             symbols_start.elapsed(),
@@ -1143,6 +1196,7 @@ pub(crate) fn completion_sort_key(
 /// Keep the result set handed to reedline bounded. The menu displays six rows,
 /// but layout still scans the whole returned vector on every repaint.
 pub(crate) const MAX_COMPLETION_SUGGESTIONS: usize = 120;
+pub(crate) const CONTEXT_COMPLETION_WAIT: Duration = Duration::from_millis(200);
 
 /// How many not-yet-known symbols get an eager background usage lookup per
 /// `complete()` call. Usage text is only queued for narrow result sets; broad
