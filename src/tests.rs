@@ -157,6 +157,14 @@ fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     assert!(query.contains("matchingContexts"));
     assert!(query.contains("StringStartsQ[#, p]"));
     assert!(query.contains("isPrivateContext"));
+    assert!(query.contains("showsPrivateContext"));
+    assert!(
+        compact_query.contains("showsPrivateContext=(isPrivateContext[#]&&StringStartsQ[p,#])&;")
+    );
+    assert!(query.contains("isVisibleContext"));
+    assert!(
+        compact_query.contains("isVisibleContext=(!isPrivateContext[#]||showsPrivateContext[#])&;")
+    );
     assert!(query.contains("contextOf"));
     assert!(query.contains("StringReplace[#1"));
     assert!(!query.contains("ToExpression"));
@@ -415,13 +423,13 @@ fn no_color_mode_keeps_theme_plain() {
     let theme = ThemeHandle::builtin(Theme::plain());
 
     assert_eq!(
-        execute_repl_command(":theme dark", &theme, false),
+        execute_repl_command(":theme dark", &theme, false, ConfigMode::User),
         CommandAction::Continue
     );
     assert_eq!(theme.current(), Theme::plain());
 
     assert_eq!(
-        execute_repl_command(":theme", &theme, false),
+        execute_repl_command(":theme", &theme, false, ConfigMode::User),
         CommandAction::Continue
     );
     assert_eq!(theme.current(), Theme::plain());
@@ -432,7 +440,7 @@ fn theme_commands_can_change_theme_when_color_is_enabled() {
     let theme = ThemeHandle::builtin(Theme::plain());
 
     assert_eq!(
-        execute_repl_command(":theme dark", &theme, true),
+        execute_repl_command(":theme dark", &theme, true, ConfigMode::User),
         CommandAction::Continue
     );
     assert_eq!(theme.current(), Theme::dark());

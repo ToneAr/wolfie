@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 use crate::{
+    commands::ConfigMode,
     kernel::{KernelClient, KernelConnection, KernelExit, ScriptInvocation},
     native_wstp::LinkProtocol,
     repl::run_repl,
@@ -21,6 +22,18 @@ struct Args {
     /// Disable ANSI coloring.
     #[arg(long = "no-color")]
     no_color: bool,
+
+    /// Start the REPL without printing the welcome banner.
+    #[arg(long = "no-welcome")]
+    no_welcome: bool,
+
+    /// Disable REPL input/output prompts and the welcome banner.
+    #[arg(long = "no-prompt")]
+    no_prompt: bool,
+
+    /// Ignore user config and use fresh in-memory defaults for this session.
+    #[arg(long = "skip-config")]
+    skip_config: bool,
 
     /// Evaluate a Wolfram Language expression and exit.
     #[arg(short = 'e', long = "eval")]
@@ -78,6 +91,9 @@ struct ParsedArgs {
 struct EffectiveArgs {
     no_frontend: bool,
     no_color: bool,
+    no_welcome: bool,
+    no_prompt: bool,
+    config_mode: ConfigMode,
     eval: Option<String>,
     link_connect: bool,
     link_name: Option<String>,
@@ -91,8 +107,13 @@ struct EffectiveArgs {
 }
 
 pub(crate) fn run() -> Result<()> {
-    let config = load_user_config();
-    let args = effective_args(parse_args(), config.clone())?;
+    let parsed = parse_args();
+    let config = if parsed.args.skip_config {
+        UserConfig::default()
+    } else {
+        load_user_config()
+    };
+    let args = effective_args(parsed, config.clone())?;
 
     let use_color = !args.no_color;
     let link_init_directory = if args.link_init {
@@ -111,7 +132,15 @@ pub(crate) fn run() -> Result<()> {
             args.script_invocation,
             use_color,
         ),
-        (None, None) => run_repl(!args.no_frontend, use_color, connection, config),
+        (None, None) => run_repl(
+            !args.no_frontend,
+            use_color,
+            !args.no_welcome,
+            !args.no_prompt,
+            connection,
+            config,
+            args.config_mode,
+        ),
         (Some(_), Some(_)) => bail!("use either --eval or a file, not both"),
     };
 
@@ -194,6 +223,16 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
         args,
         direct_script,
     } = parsed;
+    let config_mode = if args.skip_config {
+        ConfigMode::Ephemeral
+    } else {
+        ConfigMode::User
+    };
+    let config = if args.skip_config {
+        UserConfig::default()
+    } else {
+        config
+    };
     let command = config.command;
     let link_connect = args.link_connect || command.linkconnect.unwrap_or(false);
     let link_options = args.link_options.or(command.linkoptions);
@@ -225,9 +264,13 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
         LinkProtocol::SharedMemory
     };
 
+    let no_prompt = args.no_prompt || command.no_prompt.unwrap_or(false);
+
     Ok(EffectiveArgs {
         no_frontend: args.no_frontend || command.no_frontend.unwrap_or(false),
         no_color: args.no_color || command.no_color.unwrap_or(false),
+        no_welcome: no_prompt || args.no_welcome || command.no_welcome.unwrap_or(false),
+        no_prompt,
         eval: args.eval,
         link_connect,
         link_name: if link_connect {
@@ -246,6 +289,7 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
         } else {
             ScriptInvocation::File
         },
+        config_mode,
     })
 }
 
@@ -368,6 +412,58 @@ mod tests {
         assert_eq!(
             normalized.args,
             os_strings(&["wolfie", "--no-color", "--file", "script.wl"])
+        );
+        assert!(normalized.direct_script);
+    }
+
+    #[test]
+    fn normalizes_direct_script_invocation_after_skip_config() {
+        let normalized = normalized_args(os_strings(&["wolfie", "--skip-config", "script.wl"]));
+
+        assert_eq!(
+            normalized.args,
+            os_strings(&["wolfie", "--skip-config", "--file", "script.wl"])
+        );
+        assert!(normalized.direct_script);
+    }
+
+    #[test]
+    fn parses_repl_display_flags() {
+        let args = Args::try_parse_from(["wolfie", "--no-welcome", "--no-prompt"])
+            .expect("display flags should parse");
+        let args = effective(args);
+
+        assert!(args.no_welcome);
+        assert!(args.no_prompt);
+    }
+
+    #[test]
+    fn no_prompt_also_disables_welcome() {
+        let args = Args::try_parse_from(["wolfie", "--no-prompt"]).expect("no-prompt should parse");
+        let args = effective(args);
+
+        assert!(args.no_prompt);
+        assert!(args.no_welcome);
+    }
+
+    #[test]
+    fn normalizes_direct_script_invocation_after_repl_display_flags() {
+        let normalized = normalized_args(os_strings(&[
+            "wolfie",
+            "--no-welcome",
+            "--no-prompt",
+            "script.wl",
+        ]));
+
+        assert_eq!(
+            normalized.args,
+            os_strings(&[
+                "wolfie",
+                "--no-welcome",
+                "--no-prompt",
+                "--file",
+                "script.wl",
+            ])
         );
         assert!(normalized.direct_script);
     }
@@ -598,6 +694,8 @@ mod tests {
                 command: CommandConfig {
                     no_frontend: Some(true),
                     no_color: Some(true),
+                    no_welcome: Some(true),
+                    no_prompt: Some(true),
                     linkconnect: Some(true),
                     linkname: Some("config-link".to_string()),
                     linkprotocol: Some("TCPIP".to_string()),
@@ -609,6 +707,8 @@ mod tests {
 
         assert!(args.no_frontend);
         assert!(args.no_color);
+        assert!(args.no_welcome);
+        assert!(args.no_prompt);
         let connection = connection(&args).expect("config defaults should be valid");
 
         match connection {
@@ -625,12 +725,63 @@ mod tests {
     }
 
     #[test]
+    fn config_no_prompt_also_disables_welcome() {
+        let args = Args::try_parse_from(["wolfie"]).expect("empty args should parse");
+        let args = effective_with_config(
+            args,
+            UserConfig {
+                command: CommandConfig {
+                    no_prompt: Some(true),
+                    ..CommandConfig::default()
+                },
+                ..UserConfig::default()
+            },
+        );
+
+        assert!(args.no_prompt);
+        assert!(args.no_welcome);
+    }
+
+    #[test]
+    fn skip_config_ignores_config_defaults() {
+        let args = Args::try_parse_from(["wolfie", "--skip-config"])
+            .expect("skip-config args should parse");
+        let args = effective_with_config(
+            args,
+            UserConfig {
+                command: CommandConfig {
+                    no_frontend: Some(true),
+                    no_color: Some(true),
+                    no_welcome: Some(true),
+                    no_prompt: Some(true),
+                    linkconnect: Some(true),
+                    linkname: Some("config-link".to_string()),
+                    linkprotocol: Some("TCPIP".to_string()),
+                    ..CommandConfig::default()
+                },
+                ..UserConfig::default()
+            },
+        );
+
+        assert_eq!(args.config_mode, ConfigMode::Ephemeral);
+        assert!(!args.no_frontend);
+        assert!(!args.no_color);
+        assert!(!args.no_welcome);
+        assert!(!args.no_prompt);
+        assert!(!args.link_connect);
+        let connection = connection(&args).expect("default args should launch a kernel");
+        assert!(matches!(connection, KernelConnection::Launch { .. }));
+    }
+
+    #[test]
     fn parses_command_config_from_argument_name_keys() {
         let config: UserConfig = serde_json::from_str(
             r#"{
               "command": {
                 "no-frontend": true,
                 "no-color": true,
+                "no-welcome": true,
+                "no-prompt": true,
                 "linkconnect": true,
                 "linkname": "config-link",
                 "linkprotocol": "SharedMemory",
@@ -644,6 +795,8 @@ mod tests {
 
         assert_eq!(config.command.no_frontend, Some(true));
         assert_eq!(config.command.no_color, Some(true));
+        assert_eq!(config.command.no_welcome, Some(true));
+        assert_eq!(config.command.no_prompt, Some(true));
         assert_eq!(config.command.linkconnect, Some(true));
         assert_eq!(config.command.linkname.as_deref(), Some("config-link"));
         assert_eq!(config.command.linkprotocol.as_deref(), Some("SharedMemory"));

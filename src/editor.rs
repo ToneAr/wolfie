@@ -35,10 +35,15 @@ pub(crate) struct WolframPrompt {
     pub(crate) kernel_status: KernelStatus,
     pub(crate) _frontend_status: FrontEndStatus,
     pub(crate) theme: ThemeHandle,
+    pub(crate) show_prompt: bool,
 }
 
 impl Prompt for WolframPrompt {
     fn render_prompt_left(&self) -> std::borrow::Cow<'_, str> {
+        if !self.show_prompt {
+            return "".into();
+        }
+
         let styles = self.theme.current().styles();
         styles
             .prompt_left
@@ -48,6 +53,10 @@ impl Prompt for WolframPrompt {
     }
 
     fn render_prompt_right(&self) -> std::borrow::Cow<'_, str> {
+        if !self.show_prompt {
+            return "".into();
+        }
+
         let styles = self.theme.current().styles();
         styles
             .prompt_right_text
@@ -64,6 +73,10 @@ impl Prompt for WolframPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> std::borrow::Cow<'_, str> {
+        if !self.show_prompt {
+            return "".into();
+        }
+
         let width = self.input_prompt.chars().count();
         let indicator = format!("{}> ", " ".repeat(width.saturating_sub(2)));
         self.theme

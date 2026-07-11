@@ -18,6 +18,12 @@ pub(crate) enum CommandAction {
     Quit,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConfigMode {
+    User,
+    Ephemeral,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReplCommand {
     Clear,
@@ -46,6 +52,7 @@ pub(crate) fn execute_repl_command(
     input: &str,
     theme: &ThemeHandle,
     use_color: bool,
+    config_mode: ConfigMode,
 ) -> CommandAction {
     let command = match parse_repl_command(input, theme.registry()) {
         Ok(command) => command,
@@ -62,15 +69,29 @@ pub(crate) fn execute_repl_command(
             CommandAction::Continue
         }
         ReplCommand::Config(ConfigCommand::Show) => {
-            match config_file() {
-                Some(path) => println!("Config: {}", path.display()),
-                None => println!("Could not determine the config file location."),
+            match config_mode {
+                ConfigMode::User => match config_file() {
+                    Some(path) => println!("Config: {}", path.display()),
+                    None => println!("Could not determine the config file location."),
+                },
+                ConfigMode::Ephemeral => {
+                    println!(
+                        "Config: skipped by --skip-config; using in-memory defaults for this session."
+                    )
+                }
             }
             CommandAction::Continue
         }
         ReplCommand::Config(ConfigCommand::Edit) => {
-            if let Err(err) = edit_config_file() {
-                println!("Could not open config: {err:#}");
+            match config_mode {
+                ConfigMode::User => {
+                    if let Err(err) = edit_config_file() {
+                        println!("Could not open config: {err:#}");
+                    }
+                }
+                ConfigMode::Ephemeral => println!(
+                    "Config editing is disabled by --skip-config for this ephemeral session."
+                ),
             }
             CommandAction::Continue
         }

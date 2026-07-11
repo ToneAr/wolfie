@@ -454,6 +454,18 @@ pub(crate) struct CommandConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) no_color: Option<bool>,
+    #[serde(
+        rename = "no-welcome",
+        alias = "no_welcome",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) no_welcome: Option<bool>,
+    #[serde(
+        rename = "no-prompt",
+        alias = "no_prompt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) no_prompt: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) linkconnect: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -472,6 +484,8 @@ impl CommandConfig {
     fn is_empty(&self) -> bool {
         self.no_frontend.is_none()
             && self.no_color.is_none()
+            && self.no_welcome.is_none()
+            && self.no_prompt.is_none()
             && self.linkconnect.is_none()
             && self.linkname.is_none()
             && self.linkprotocol.is_none()
@@ -544,12 +558,16 @@ impl ThemeHandle {
         }
     }
 
-    pub(crate) fn builtin(theme: Theme) -> Self {
+    pub(crate) fn ephemeral(theme: Theme, registry: ThemeRegistry) -> Self {
         Self {
             current: Arc::new(RwLock::new(theme)),
-            registry: ThemeRegistry::builtin_only(),
+            registry,
             persist_selection: false,
         }
+    }
+
+    pub(crate) fn builtin(theme: Theme) -> Self {
+        Self::ephemeral(theme, ThemeRegistry::builtin_only())
     }
 
     pub(crate) fn current(&self) -> Theme {

@@ -247,8 +247,15 @@ impl KernelClient {
         input: &str,
         theme: &ThemeHandle,
         input_handler: &mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>,
+        show_output_prompt: bool,
     ) -> Result<()> {
-        self.evaluate(input, Some(theme), Some(input_handler), true, true)
+        self.evaluate(
+            input,
+            Some(theme),
+            Some(input_handler),
+            true,
+            show_output_prompt,
+        )
     }
 
     fn evaluate(
