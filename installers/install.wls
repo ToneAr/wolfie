@@ -36,7 +36,9 @@ helpBase[] :=
 			"  VERSION              Same as --version.",
 			"  GITHUB_REPO          GitHub repo to download from.",
 			"                       Defaults to ToneAr/wolfie.",
-			"  WOLFRAM_CLI_SHA256   Optional expected SHA-256 checksum."
+			"  WOLFRAM_CLI_SHA256   Optional expected SHA-256 checksum.",
+			"",
+			"The install directory is added to user PATH automatically."
 		},
 		"\n"
 	];
@@ -115,6 +117,202 @@ pathContainsQ[directory_String] :=
 		target = normalizePath[directory];
 		entries = Select[StringSplit[env["PATH"], pathSeparator[]], # =!= ""&];
 		MemberQ[normalizePath /@ entries, target]
+	];
+
+pathListContainsQ[pathValue_String, directory_String] :=
+	Module[{target, entries},
+		target = normalizePath[directory];
+		entries = Select[StringSplit[pathValue, pathSeparator[]], # =!= ""&];
+		MemberQ[normalizePath /@ entries, target]
+	];
+
+commandAvailableQ[command_String] :=
+	StringQ[Quiet[Check[FindExecutable[command], $Failed]]];
+
+shellQuote[value_String] :=
+	StringJoin[ "'", StringReplace[value, "'" -> "'\\''"], "'"];
+
+powerShellQuote[value_String] :=
+	StringJoin[ "'", StringReplace[value, "'" -> "''"], "'"];
+
+pathProfileFile[] :=
+	Module[{shell, shellName},
+		shell = env["SHELL"];
+		shellName = If[shell === "", "", FileNameTake[shell]];
+		If[
+			shellName === "zsh" ||
+			($OperatingSystem === "MacOSX" && shellName === ""),
+			Return[FileNameJoin[{$HomeDirectory, ".zprofile"}]]
+		];
+		If[shellName === "bash",
+			Return[FileNameJoin[{$HomeDirectory, ".bashrc"}]]
+		];
+		FileNameJoin[{$HomeDirectory, ".profile"}]
+	];
+
+pathProfileBlock[installDir_String] :=
+	StringRiffle[
+		{
+			"# >>> wolfie installer >>>",
+			"# Add wolfie to PATH.",
+			StringJoin[ "wolfie_install_dir=", shellQuote[installDir]],
+			"case \":$PATH:\" in",
+			"    *\":$wolfie_install_dir:\"*) ;;",
+			"    *) export PATH=\"$wolfie_install_dir:$PATH\" ;;",
+			"esac",
+			"unset wolfie_install_dir",
+			"# <<< wolfie installer <<<",
+			""
+		},
+		"\n"
+	];
+
+removeExistingPathBlock[text_String] :=
+	StringReplace[
+		text,
+		RegularExpression[
+			"(?s)# >>> wolfie installer >>>.*?# <<< wolfie installer <<<\\R?"
+		] -> ""
+	];
+
+addInstallDirToProcessPath[installDir_String] :=
+	If[!pathContainsQ[installDir],
+		If[env["PATH"] === "",
+			SetEnvironment["PATH" -> installDir],
+			SetEnvironment[
+				"PATH" -> StringJoin[ installDir, pathSeparator[], env["PATH"]]
+			]
+		]
+	];
+
+addInstallDirToUnixPath[installDir_String] :=
+	Module[{
+			profile,
+			directory,
+			existing,
+			updated,
+			prefix
+		},
+		addInstallDirToProcessPath[installDir];
+		profile = pathProfileFile[];
+		directory = DirectoryName[profile];
+		If[!DirectoryQ[directory],
+			CreateDirectory[directory, CreateIntermediateDirectories -> True]
+		];
+		existing = If[FileExistsQ[profile], Import[profile, "Text"], ""];
+		updated = removeExistingPathBlock[existing];
+		prefix =
+			If[StringLength[updated] > 0 && !StringEndsQ[updated, "\n"],
+				"\n\n",
+				If[StringLength[updated] > 0, "\n", ""]
+			];
+		Export[
+			profile,
+			StringJoin[ updated, prefix, pathProfileBlock[installDir]],
+			"Text"
+		];
+		logMessage[
+			"INFO",
+			StringJoin[ "Added ", installDir, " to PATH in ", profile, "."]
+		];
+		logMessage[
+			"INFO",
+			StringJoin[
+				"Open a new terminal for the PATH change to be available ",
+				"everywhere."
+			]
+		]
+	];
+
+powerShellPathScript[installDir_String] :=
+	StringRiffle[
+		{
+			StringJoin[ "$dir = ", powerShellQuote[installDir]],
+			"function Normalize-PathEntry {",
+			"    param([string]$Path)",
+			"    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }",
+			StringJoin[
+				"    try { return ",
+				"[System.IO.Path]::GetFullPath($Path).TrimEnd('\\', '/') }"
+			],
+			"    catch { return $Path.TrimEnd('\\', '/') }",
+			"}",
+			"$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')",
+			"if ($null -eq $userPath) { $userPath = '' }",
+			StringJoin[
+				"$entries = @($userPath -split ';' | Where-Object { -not ",
+				"[string]::IsNullOrWhiteSpace($_) })"
+			],
+			"$normalizedDir = Normalize-PathEntry $dir",
+			"$contains = $false",
+			"foreach ($entry in $entries) {",
+			"    if ((Normalize-PathEntry $entry) -ieq $normalizedDir) {",
+			"        $contains = $true",
+			"        break",
+			"    }",
+			"}",
+			"if (-not $contains) {",
+			StringJoin[
+				"    [Environment]::SetEnvironmentVariable('Path', ",
+				"((@($entries) + $dir) -join ';'), 'User')"
+			],
+			"}"
+		},
+		"\n"
+	];
+
+addInstallDirToWindowsPath[installDir_String] :=
+	Module[{shell, result},
+		addInstallDirToProcessPath[installDir];
+		shell =
+			Which[
+				commandAvailableQ["pwsh"],
+					"pwsh",
+				commandAvailableQ["powershell"],
+					"powershell",
+				True,
+					fail["PowerShell is required to update the user PATH"]
+			];
+		result =
+			RunProcess[
+				{
+					shell,
+					"-NoProfile",
+					"-ExecutionPolicy",
+					"Bypass",
+					"-Command",
+					powerShellPathScript[installDir]
+				}
+			];
+		If[result["ExitCode"] =!= 0,
+			fail[
+				StringJoin[
+					"failed to update user PATH: ",
+					StringTrim[result["StandardError"]]
+				]
+			]
+		];
+		logMessage[
+			"INFO",
+			StringJoin[
+				"Added ",
+				installDir,
+				" to the user PATH environment variable."
+			]
+		];
+		logMessage[
+			"INFO",
+			StringJoin[
+				"Open a new terminal for the PATH change to be available ",
+				"everywhere."
+			]
+		]
+	];
+
+addInstallDirToPath[installDir_String] :=
+	If[$OperatingSystem === "Windows",
+		addInstallDirToWindowsPath[installDir],
+		addInstallDirToUnixPath[installDir]
 	];
 
 writableDirectoryQ[directory_String] :=
@@ -513,18 +711,7 @@ main[] :=
 			StringJoin[ "Installed ", $binaryName, " to ", destination]
 		];
 		createDefaultConfig[];
-		If[!pathContainsQ[installDir],
-			logMessage[
-				"INFO",
-				StringJoin[
-					"Add ",
-					installDir,
-					" to PATH to run ",
-					$binaryName,
-					" without a full path."
-				]
-			]
-		];
+		If[!pathContainsQ[installDir], addInstallDirToPath[installDir]];
 		0
 	];
 

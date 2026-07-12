@@ -22,6 +22,7 @@ Options:
                        it is writable and already on PATH.
   --version TAG        Install a specific GitHub release tag, such as v0.2.0.
                        Defaults to the latest release.
+                       The install directory is added to user PATH automatically.
   --build-from-source  Build this checkout with cargo and install the result.
   --force              Replace an existing binary at the destination.
   -h, --help           Show this help.
@@ -56,6 +57,90 @@ path_contains() {
         *":$1:"*) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+shell_quote() {
+    printf "'"
+    printf '%s' "$1" | sed "s/'/'\\''/g"
+    printf "'"
+}
+
+path_profile_file() {
+    shell_name="$(basename "${SHELL:-}")"
+    os_name="$(uname -s 2>/dev/null || printf '%s' '')"
+
+    if [ "$shell_name" = "zsh" ] || { [ "$os_name" = "Darwin" ] && [ -z "$shell_name" ]; }; then
+        printf '%s\n' "$HOME/.zprofile"
+    elif [ "$shell_name" = "bash" ]; then
+        printf '%s\n' "$HOME/.bashrc"
+    else
+        printf '%s\n' "$HOME/.profile"
+    fi
+}
+
+path_profile_block() {
+    quoted_install_dir="$(shell_quote "$INSTALL_DIR")"
+    cat <<EOF
+# >>> wolfie installer >>>
+# Add wolfie to PATH.
+wolfie_install_dir=$quoted_install_dir
+case ":\$PATH:" in
+    *":\$wolfie_install_dir:"*) ;;
+    *) export PATH="\$wolfie_install_dir:\$PATH" ;;
+esac
+unset wolfie_install_dir
+# <<< wolfie installer <<<
+EOF
+}
+
+remove_existing_path_block() {
+    profile_file="$1"
+    tmp_file="${profile_file}.tmp.$$"
+
+    [ -f "$profile_file" ] || return 0
+
+    awk '
+        /^# >>> wolfie installer >>>$/ {
+            in_block = 1
+            next
+        }
+        /^# <<< wolfie installer <<<$/ {
+            if (in_block) {
+                in_block = 0
+                next
+            }
+        }
+        !in_block {
+            print
+        }
+    ' "$profile_file" > "$tmp_file"
+    mv "$tmp_file" "$profile_file"
+}
+
+add_install_dir_to_path() {
+    profile_file="$(path_profile_file)"
+
+    if ! path_contains "$INSTALL_DIR"; then
+        if [ -n "${PATH:-}" ]; then
+            export PATH="$INSTALL_DIR:$PATH"
+        else
+            export PATH="$INSTALL_DIR"
+        fi
+    fi
+
+    mkdir -p "$(dirname "$profile_file")"
+    touch "$profile_file"
+    remove_existing_path_block "$profile_file"
+
+    {
+        if [ -s "$profile_file" ]; then
+            printf '\n'
+        fi
+        path_profile_block
+    } >> "$profile_file"
+
+    log "Added $INSTALL_DIR to PATH in $profile_file."
+    log "Open a new terminal for the PATH change to be available everywhere."
 }
 
 default_install_dir() {
@@ -271,5 +356,5 @@ log "Installed $BINARY_NAME to $destination"
 create_default_config
 
 if ! path_contains "$INSTALL_DIR"; then
-    log "Add $INSTALL_DIR to PATH to run $BINARY_NAME without a full path."
+    add_install_dir_to_path
 fi

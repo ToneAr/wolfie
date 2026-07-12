@@ -32,6 +32,7 @@ Options:
                      unless `%USERPROFILE%\.local\bin is writable and already on PATH.
   -Version TAG       Install a specific GitHub release tag, such as v0.2.0.
                      Defaults to the latest release.
+                     The install directory is added to user PATH automatically.
   -BuildFromSource   Build this checkout with cargo and install the result.
   -Force             Replace an existing binary at the destination.
   -Help              Show this help.
@@ -156,6 +157,50 @@ function Test-PathContains {
     }
 
     return $false
+}
+
+function Test-PathListContains {
+    param(
+        [string]$PathValue,
+        [string]$Directory
+    )
+
+    $normalizedDirectory = Normalize-PathEntry $Directory
+    foreach ($entry in (($PathValue -split ';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ((Normalize-PathEntry $entry) -ieq $normalizedDirectory) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Add-InstallDirToUserPath {
+    param([string]$Directory)
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -eq $userPath) {
+        $userPath = ''
+    }
+
+    if (-not (Test-PathListContains -PathValue $userPath -Directory $Directory)) {
+        $entries = @($userPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $newUserPath = (@($entries) + $Directory) -join ';'
+        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+        Write-Log "Added $Directory to the user PATH environment variable."
+    } else {
+        Write-Log "$Directory is already present in the user PATH environment variable."
+    }
+
+    if (-not (Test-PathContains $Directory)) {
+        if ([string]::IsNullOrWhiteSpace($env:PATH)) {
+            $env:PATH = $Directory
+        } else {
+            $env:PATH = "$Directory;$env:PATH"
+        }
+    }
+
+    Write-Log 'Open a new terminal for the PATH change to be available everywhere.'
 }
 
 function Test-WritableDirectory {
@@ -394,5 +439,5 @@ Write-Log "Installed $BinaryName to $destination"
 New-DefaultConfigFile
 
 if (-not (Test-PathContains $InstallDir)) {
-    Write-Log "Add $InstallDir to PATH to run $BinaryName without a full path."
+    Add-InstallDirToUserPath -Directory $InstallDir
 }

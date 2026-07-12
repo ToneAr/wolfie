@@ -114,15 +114,28 @@ ones.
 Quick list of all features:
 
 1. **Symbol completion**
+
    ![symbols](docs/img/symbols.png)
+
 2. **Context completion**
+
    ![contexts](docs/img/contexts.png)
+
 3. **Fuzzy matching** **[WIP]**
+
    ![fuzzy](docs/img/fuzzy.png)
+
 4. **File and directory autocomplete**
+
    ![filesystem](docs/img/filesystem.png)
-5. **System command completion**
+
+5. **System command completion (:)**
+
    ![commands](docs/img/commands.png)
+
+6. **Quick shell mode (:!)**
+
+   ![shell](docs/img/shell.png)
 
 ## Completion
 

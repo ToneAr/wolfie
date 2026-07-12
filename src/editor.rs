@@ -674,9 +674,17 @@ impl Validator for WolframValidator {
 }
 
 pub(crate) fn history_path() -> Result<PathBuf> {
-    let base = env::var_os("XDG_STATE_HOME")
+    let non_empty_env = |key| env::var_os(key).filter(|value| !value.is_empty());
+
+    let base = non_empty_env("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .or_else(|| non_empty_env("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .or_else(|| non_empty_env("LOCALAPPDATA").map(PathBuf::from))
+        .or_else(|| non_empty_env("APPDATA").map(PathBuf::from))
+        .or_else(|| {
+            non_empty_env("USERPROFILE")
+                .map(|home| PathBuf::from(home).join("AppData").join("Local"))
+        })
         .context("could not determine a history directory")?;
     let dir = base.join("wolfie");
     std::fs::create_dir_all(&dir)?;
