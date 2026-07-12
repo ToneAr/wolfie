@@ -39,7 +39,7 @@ impl WolframHighlighter {
 }
 
 impl Highlighter for WolframHighlighter {
-    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
+    fn highlight(&self, line: &str, cursor: usize) -> StyledText {
         let user_symbols = self
             .user_symbols
             .lock()
@@ -50,8 +50,9 @@ impl Highlighter for WolframHighlighter {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        highlight_wolfram_text(
+        highlight_wolfram_text_at_cursor(
             line,
+            cursor,
             self.theme.current().styles(),
             Some(&self.builtin_symbols),
             Some(&user_symbols),
@@ -69,7 +70,29 @@ pub(crate) fn highlight_wolfram_text(
     known_qualified_symbols: Option<&HashSet<String>>,
     symbol_lookup: Option<&SymbolHighlighterLookup>,
 ) -> StyledText {
-    if let Some(shell_escape_start) = shell_escape_start(line) {
+    highlight_wolfram_text_at_cursor(
+        line,
+        line.len(),
+        styles,
+        builtin_symbols,
+        user_symbols,
+        known_qualified_symbols,
+        symbol_lookup,
+    )
+}
+
+pub(crate) fn highlight_wolfram_text_at_cursor(
+    line: &str,
+    cursor: usize,
+    styles: ThemeStyles,
+    builtin_symbols: Option<&HashSet<String>>,
+    user_symbols: Option<&HashSet<String>>,
+    known_qualified_symbols: Option<&HashSet<String>>,
+    symbol_lookup: Option<&SymbolHighlighterLookup>,
+) -> StyledText {
+    if let Some(shell_escape_start) = shell_escape_start(line)
+        && shell_escape_is_active(line, cursor, shell_escape_start)
+    {
         return highlight_shell_escape(line, styles, shell_escape_start);
     }
 
@@ -175,6 +198,12 @@ fn shell_escape_start(line: &str) -> Option<usize> {
         .then_some(line.len() - trimmed.len())
 }
 
+fn shell_escape_is_active(line: &str, cursor: usize, shell_escape_start: usize) -> bool {
+    let marker_end = shell_escape_start + 2;
+    let cursor = cursor.min(line.len());
+    cursor >= marker_end
+}
+
 fn repl_command_start(line: &str) -> Option<usize> {
     let trimmed = line.trim_start();
     trimmed
@@ -204,7 +233,7 @@ fn highlight_shell_escape(
     if shell_escape_start > 0 {
         out.push((Style::new(), line[..shell_escape_start].to_string()));
     }
-    out.push((Style::new().fg(Color::Red).bold(), "!".to_string()));
+    out.push((Style::new().fg(Color::Red).bold(), "! ".to_string()));
 
     let command_start = shell_escape_start + 2;
     let command = &line[command_start..];

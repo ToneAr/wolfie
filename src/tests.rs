@@ -1424,6 +1424,20 @@ fn highlighted_fragments(text: &str) -> Vec<(nu_ansi_term::Style, String)> {
     highlight_wolfram_text(text, test_styles(), None, None, None, None).buffer
 }
 
+fn highlighted_fragments_at_cursor(
+    text: &str,
+    cursor: usize,
+) -> Vec<(nu_ansi_term::Style, String)> {
+    highlight_wolfram_text_at_cursor(text, cursor, test_styles(), None, None, None, None).buffer
+}
+
+fn highlighted_text_at_cursor(text: &str, cursor: usize) -> String {
+    highlighted_fragments_at_cursor(text, cursor)
+        .into_iter()
+        .map(|(_, fragment)| fragment)
+        .collect()
+}
+
 #[test]
 fn highlighter_colors_builtin_symbols() {
     let builtin: HashSet<String> = ["Plot".to_string()].into_iter().collect();
@@ -1455,7 +1469,7 @@ fn highlighter_uses_shell_styles_only_for_shell_escape() {
             nu_ansi_term::Style::new()
                 .fg(nu_ansi_term::Color::Red)
                 .bold(),
-            "!".to_string()
+            "! ".to_string()
         ))
     );
     assert!(!fragments.iter().any(|(_, fragment)| fragment == ":!"));
@@ -1464,6 +1478,43 @@ fn highlighter_uses_shell_styles_only_for_shell_escape() {
     assert!(fragments.contains(&(test_styles().completion_option, "--help".to_string())));
     assert!(fragments.contains(&(test_styles().string, "\"hello\"".to_string())));
     assert!(fragments.contains(&(test_styles().comment, "# note".to_string())));
+}
+
+#[test]
+fn highlighter_keeps_display_width_aligned_when_shell_escape_has_real_space() {
+    let text = ":! x";
+    let highlighted = highlighted_text_at_cursor(text, text.len());
+
+    assert_eq!(highlighted, "!  x");
+    assert_eq!(highlighted.chars().count(), text.chars().count());
+}
+
+#[test]
+fn highlighter_reveals_shell_escape_marker_only_when_cursor_is_left_or_inside_it() {
+    for cursor in [0, 1] {
+        assert_eq!(
+            highlighted_fragments_at_cursor(":!echo", cursor),
+            vec![
+                (
+                    nu_ansi_term::Style::new().fg(nu_ansi_term::Color::Cyan),
+                    ":".to_string()
+                ),
+                (nu_ansi_term::Style::new(), "!echo".to_string())
+            ]
+        );
+    }
+
+    for cursor in [2, 3] {
+        assert_eq!(
+            highlighted_fragments_at_cursor(":!echo", cursor)[0],
+            (
+                nu_ansi_term::Style::new()
+                    .fg(nu_ansi_term::Color::Red)
+                    .bold(),
+                "! ".to_string()
+            )
+        );
+    }
 }
 
 #[test]
