@@ -30,36 +30,42 @@ jobs:
                       systemid: Linux-x86-64
                       archive: tar.gz
                       build_container: ""
+                      wstp_engine_version: "15.0.0"
                     - name: linux-rhel8-x86_64
                       runner: ubuntu-latest
                       target: x86_64-unknown-linux-gnu
                       systemid: Linux-x86-64
                       archive: tar.gz
                       build_container: rockylinux:8
+                      wstp_engine_version: "14.3.0"
                     - name: linux-rhel9-x86_64
                       runner: ubuntu-latest
                       target: x86_64-unknown-linux-gnu
                       systemid: Linux-x86-64
                       archive: tar.gz
                       build_container: rockylinux:9
+                      wstp_engine_version: "14.3.0"
                     - name: macos-x86_64
                       runner: macos-15-intel
                       target: x86_64-apple-darwin
                       systemid: MacOSX-x86-64
                       archive: tar.gz
                       build_container: ""
+                      wstp_engine_version: "15.0.0"
                     - name: macos-aarch64
                       runner: macos-15
                       target: aarch64-apple-darwin
                       systemid: MacOSX-ARM64
                       archive: tar.gz
                       build_container: ""
+                      wstp_engine_version: "15.0.0"
                     - name: windows-x86_64
                       runner: windows-latest
                       target: x86_64-pc-windows-msvc
                       systemid: Windows-x86-64
                       archive: zip
                       build_container: ""
+                      wstp_engine_version: "15.0.0"
 
         steps:
             - name: Checkout
@@ -94,11 +100,11 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
-                  wstp_dir="$RUNNER_TEMP/wstp-${{ matrix.systemid }}"
+                  wstp_dir="$RUNNER_TEMP/wstp-${{ matrix.systemid }}-${{ matrix.wstp_engine_version }}"
                   mkdir -p "$wstp_dir"
                   docker run --rm --user root \
                     -v "$wstp_dir:/out" \
-                    wolframresearch/wolframengine:${{ env.WOLFRAM_ENGINE_VERSION }} \
+                    wolframresearch/wolframengine:${{ matrix.wstp_engine_version }} \
                     sh -lc '
                       set -e
                       src=$(find /usr/local/Wolfram -maxdepth 10 -type d -path "*/SystemFiles/Links/WSTP/DeveloperKit/Linux-x86-64/CompilerAdditions" -print -quit)
@@ -235,7 +241,10 @@ jobs:
                     ${{ matrix.build_container }} \
                     sh -lc '
                       set -euo pipefail
-                      dnf install -y gcc gcc-c++ make curl tar gzip libuuid-devel
+                      dnf install -y gcc gcc-c++ make tar gzip libuuid-devel
+                      if ! command -v curl >/dev/null 2>&1; then
+                        dnf install -y curl-minimal
+                      fi
                       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
                       . "$HOME/.cargo/env"
                       rustup target add ${{ matrix.target }}
