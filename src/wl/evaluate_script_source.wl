@@ -19,7 +19,7 @@ Function[
 					If[held === EndOfFile, Break[]];
 					result = ReleaseHold[held]
 				];
-				result
+				If[result === Null, "", result]
 			],
 			Close[stream]
 		]

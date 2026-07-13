@@ -240,6 +240,15 @@ fn invokes_wolfram_files_as_immediate_function_calls() {
 }
 
 #[test]
+fn script_source_evaluation_suppresses_null_results() {
+    let compact_source = EVALUATE_SCRIPT_SOURCE_WL
+        .split_whitespace()
+        .collect::<String>();
+
+    assert!(compact_source.contains("If[result===Null,\"\",result]"));
+}
+
+#[test]
 fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     let query = symbol_completion_query("LP");
     let compact_query = query.split_whitespace().collect::<String>();

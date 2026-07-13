@@ -1,4 +1,4 @@
-#!/usr/bin/wolframscript
+#!/usr/bin/env wolfie
 
 CL = ResourceFunction["CommandLineTools"];
 
@@ -31,4 +31,4 @@ Enclose[
 	CL["Log", "SUCC", StringTemplate["Bumbped version `` -> ``"][pre, new]]
 	,
 	Function[e, CL["Log", "FAIL", e["Information"]]; Exit[1]]
-]
+];
