@@ -1,7 +1,11 @@
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -63,6 +67,109 @@ enum KernelPacket {
 }
 
 type KernelInputHandler<'a> = dyn FnMut(&KernelInputRequest) -> Result<Option<String>> + 'a;
+
+const LOADING_TEXT_FRAMES: [&str; 10] = [
+	"Evaluating",
+	"Evaluating.",
+	"Evaluating.",
+	"Evaluating.",
+	"Evaluating..",
+	"Evaluating..",
+	"Evaluating...",
+	"Evaluating...",
+	"Evaluating...",
+	"Evaluating",
+];
+const LOADING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const LOADING_FRAME_INTERVAL: Duration = Duration::from_millis(80);
+
+/// Shows progress while a terminal evaluation is waiting for the kernel.
+///
+/// The worker is stopped before streamed kernel text is written, preventing
+/// its terminal writes from interleaving with kernel output.
+struct LoadingIndicator {
+    running: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl LoadingIndicator {
+    fn start(theme: Option<&ThemeHandle>) -> Option<Self> {
+        if !io::stdout().is_terminal() {
+            return None;
+        }
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = running.clone();
+        let worker_theme = theme.cloned();
+
+        let worker = thread::spawn(move || {
+            let mut frame = 0;
+            let _ = write!(io::stdout(), "\x1b[?25l");
+            while worker_running.load(Ordering::Relaxed) {
+                let _ = match &worker_theme {
+                    Some(theme) => write!(
+                        io::stdout(),
+                        "\r\x1b[2K{} {}",
+                        theme.current().styles().prompt_left.paint(LOADING_FRAMES[frame]),
+                        nu_ansi_term::Color::DarkGray.paint(LOADING_TEXT_FRAMES[frame]),
+                    ),
+                    None => write!(
+                        io::stdout(),
+                        "\r\x1b[2K   {} {}",
+                        LOADING_FRAMES[frame],
+                        LOADING_TEXT_FRAMES[frame],
+                    ),
+                };
+                let _ = io::stdout().flush();
+                frame = (frame + 1) % LOADING_FRAMES.len();
+                thread::sleep(LOADING_FRAME_INTERVAL);
+            }
+            let _ = write!(io::stdout(), "\x1b[?25h\r\x1b[2K");
+            let _ = io::stdout().flush();
+        });
+
+        Some(Self {
+            running,
+            worker: Some(worker),
+        })
+    }
+}
+
+impl Drop for LoadingIndicator {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        let _ = write!(io::stdout(), "\r\x1b[2K\r");
+        let _ = io::stdout().flush();
+    }
+}
+
+/// Owns the evaluation indicator so it can be hidden for output or input and
+/// resumed below completed lines of streamed kernel output.
+struct EvaluationLoadingIndicator {
+    indicator: Option<LoadingIndicator>,
+    theme: Option<ThemeHandle>,
+}
+
+impl EvaluationLoadingIndicator {
+    fn start(theme: Option<&ThemeHandle>) -> Self {
+        Self {
+            indicator: LoadingIndicator::start(theme),
+            theme: theme.cloned(),
+        }
+    }
+
+    fn hide(&mut self) {
+        drop(self.indicator.take());
+    }
+
+    fn show_below_text(&mut self, text: &str) {
+        if text.ends_with('\n') {
+            self.indicator = LoadingIndicator::start(self.theme.as_ref());
+        }
+    }
+}
 
 fn print_kernel_text(text: &str) -> Result<()> {
     print!("{text}");
@@ -253,7 +360,7 @@ impl WstpKernelClient {
         show_output_prompt: bool,
     ) -> Result<()> {
         let previous_input_prompt = self.input_prompt.clone();
-        let packets = self.evaluate_input_packets(input, input_handler)?;
+        let packets = self.evaluate_input_packets(input, input_handler, theme)?;
         let input_prompt =
             next_input_prompt_after_evaluation(previous_input_prompt.as_deref(), &packets);
         render_packets(
@@ -275,7 +382,7 @@ impl WstpKernelClient {
         input: &str,
         theme: Option<&ThemeHandle>,
     ) -> Result<()> {
-        let packets = self.evaluate_text_packets(input)?;
+        let packets = self.evaluate_text_packets(input, theme)?;
         render_packets(
             &packets,
             theme,
@@ -331,6 +438,7 @@ impl WstpKernelClient {
         &mut self,
         input: &str,
         input_handler: Option<&mut KernelInputHandler<'_>>,
+        theme: Option<&ThemeHandle>,
     ) -> Result<Vec<KernelPacket>> {
         self.ensure_initial_prompt_read()?;
         interrupt::clear_kernel_interrupt_request();
@@ -340,13 +448,24 @@ impl WstpKernelClient {
         put_enter_text_packet(link, &input)?;
         profile_duration("wstp.enter_text.sent", start.elapsed(), "");
 
+        let mut loading = EvaluationLoadingIndicator::start(theme);
+        let mut stream_text = |text: &str, message: Option<(&str, &str)>| {
+            if let Some((symbol, tag)) = message {
+                print_kernel_message_text(text, symbol, tag, theme)
+            } else {
+                print_kernel_text(text)
+            }
+        };
         let packets = read_packets_until_return(
             link,
             &mut self.process,
             input_handler,
             true,
             "WSTP EnterTextPacket evaluation",
+            Some(&mut loading),
+            Some(&mut stream_text),
         )?;
+        drop(loading);
         profile_duration_with("wstp.enter_text.total", start.elapsed(), || {
             format!("bytes={}", packet_output_bytes(&packets))
         });
@@ -370,6 +489,8 @@ impl WstpKernelClient {
             None,
             false,
             "WSTP EvaluatePacket query",
+            None,
+            None,
         )?;
         let text = packets
             .iter()
@@ -384,7 +505,11 @@ impl WstpKernelClient {
         Ok(text)
     }
 
-    fn evaluate_text_packets(&mut self, input: &str) -> Result<Vec<KernelPacket>> {
+    fn evaluate_text_packets(
+        &mut self,
+        input: &str,
+        theme: Option<&ThemeHandle>,
+    ) -> Result<Vec<KernelPacket>> {
         self.ensure_initial_prompt_read()?;
         interrupt::clear_kernel_interrupt_request();
         let start = Instant::now();
@@ -398,12 +523,21 @@ impl WstpKernelClient {
             .map_err(|err| anyhow!("failed to flush WSTP link: {err:?}"))?;
         profile_duration("wstp.eval_text.sent", start.elapsed(), "");
 
+        let mut stream_text = |text: &str, message: Option<(&str, &str)>| {
+            if let Some((symbol, tag)) = message {
+                print_kernel_message_text(text, symbol, tag, theme)
+            } else {
+                print_kernel_text(text)
+            }
+        };
         let packets = read_packets_until_return(
             link,
             &mut self.process,
             None,
             false,
             "WSTP EvaluatePacket text evaluation",
+            None,
+            Some(&mut stream_text),
         )?;
         profile_duration_with("wstp.eval_text.total", start.elapsed(), || {
             format!("bytes={}", packet_output_bytes(&packets))
@@ -593,24 +727,52 @@ fn read_packets_until_return(
     mut input_handler: Option<&mut KernelInputHandler<'_>>,
     read_next_input_name: bool,
     operation: &str,
+    mut loading: Option<&mut EvaluationLoadingIndicator>,
+    mut stream_text: Option<&mut dyn FnMut(&str, Option<(&str, &str)>) -> Result<()>>,
 ) -> Result<Vec<KernelPacket>> {
     let mut packets = Vec::new();
+    let mut pending_message_identifier: Option<(String, String)> = None;
 
     loop {
         let packet_id = next_packet_id(link, process, operation)?;
         let packet = read_packet_payload(link, packet_id)?;
         trace_packet(operation, &packet);
+        if matches!(
+            packet,
+            KernelPacket::Text(_) | KernelPacket::Input | KernelPacket::InputString
+        ) && let Some(loading) = loading.as_deref_mut()
+        {
+            loading.hide();
+        }
+        match &packet {
+            KernelPacket::Message { symbol, tag } => {
+                pending_message_identifier = Some((symbol.clone(), tag.clone()));
+            }
+            KernelPacket::Text(text) => {
+                if let Some(render) = stream_text.as_deref_mut() {
+                    let pending_message = pending_message_identifier.take();
+                    let message = pending_message
+                        .as_ref()
+                        .map(|(symbol, tag)| (symbol.as_str(), tag.as_str()));
+                    render(text, message)?;
+                    if let Some(loading) = loading.as_deref_mut() {
+                        loading.show_below_text(text);
+                    }
+                }
+            }
+            _ => {}
+        }
         let terminal = packet_is_terminal(&packet);
         let next_prompt_after_result =
             read_next_input_name && matches!(packet, KernelPacket::InputName(_));
         let input_request = match packet {
             KernelPacket::Input => Some(KernelInputRequest {
                 kind: KernelInputKind::Expression,
-                prompt: input_request_prompt(&packets),
+                prompt: input_request_prompt(&packets, stream_text.is_some()),
             }),
             KernelPacket::InputString => Some(KernelInputRequest {
                 kind: KernelInputKind::String,
-                prompt: input_request_prompt(&packets),
+                prompt: input_request_prompt(&packets, stream_text.is_some()),
             }),
             _ => None,
         };
@@ -865,12 +1027,16 @@ fn packet_is_terminal(packet: &KernelPacket) -> bool {
 
 
 
-fn input_request_prompt(packets: &[KernelPacket]) -> String {
+fn input_request_prompt(packets: &[KernelPacket], text_packets_already_rendered: bool) -> String {
     packets
         .iter()
         .rev()
         .find_map(|packet| match packet {
-            KernelPacket::Text(text) if !text.ends_with('\n') => Some(text.clone()),
+            KernelPacket::Text(text) if !text.ends_with('\n') => Some(if text_packets_already_rendered {
+                String::new()
+            } else {
+                text.clone()
+            }),
             KernelPacket::InputName(text) => Some(text.clone()),
             _ => None,
         })
@@ -1035,31 +1201,23 @@ fn render_packets(
     options: PacketRenderOptions,
 ) -> Result<()> {
     let mut output_name: Option<&str> = None;
-    let mut pending_message_identifier: Option<(&str, &str)> = None;
     let mut text_without_trailing_newline = false;
     let mut output_separator_pending = options.separate_input_and_output;
 
     for (index, packet) in packets.iter().enumerate() {
         match packet {
+            // Text packets are rendered as soon as they arrive from the kernel.
+            // Keep their layout state here so deferred result rendering still
+            // inserts a separating newline when the text has no trailing newline.
             KernelPacket::Text(text) => {
                 if text_is_input_prompt(packets, index) {
                     text_without_trailing_newline = false;
                     continue;
                 }
-                if output_separator_pending {
-                    print_kernel_text("\n")?;
-                    output_separator_pending = false;
-                }
-                if let Some((symbol, tag)) = pending_message_identifier.take() {
-                    print_kernel_message_text(text, symbol, tag, theme)?;
-                } else {
-                    print_kernel_text(text)?;
-                }
+                output_separator_pending = false;
                 text_without_trailing_newline = !text.ends_with('\n');
             }
-            KernelPacket::Message { symbol, tag } => {
-                pending_message_identifier = Some((symbol, tag));
-            }
+            KernelPacket::Message { .. } => {}
             KernelPacket::OutputName(name) => output_name = Some(name),
             KernelPacket::Return(expr) | KernelPacket::ReturnExpression(expr) => {
                 if output_separator_pending {
