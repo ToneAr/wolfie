@@ -326,6 +326,8 @@ Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do no
 
 Locally, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` if automatic discovery does not find the target's `SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory. Linux builds also need the system `uuid` library available for linking, for example the `uuid-dev` package on Debian/Ubuntu systems.
 
+Wolfie's compiled-in TUI version name is `<cargo-version> <system-id> <build-uid>`. The build UID uses `WOLFIE_BUILD_UID` when set, otherwise GitHub Actions' run ID, and is `local` for ordinary local builds.
+
 The packaged binary locates the user's Wolfram installation at runtime using the
 discovery behavior above. Expression, REPL, completion, and script-file
 evaluation run over WSTP.

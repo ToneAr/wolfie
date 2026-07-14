@@ -35,6 +35,7 @@ use crate::{
     },
     native_wstp::KernelInputRequest,
     theme::{ThemeHandle, ThemeRegistry, UserConfig, selected_theme},
+    version,
     wolfram_syntax::{loaded_context_names, remember_user_symbols},
 };
 
@@ -303,7 +304,7 @@ fn terminal_can_fit_welcome_banner() -> bool {
 
 fn print_plain_welcome(versions: &WolframVersions) {
     println!("Wolfie");
-    println!("TUI Version: {}", env!("CARGO_PKG_VERSION"));
+    println!("TUI Version: {}", version::NAME);
     println!("Wolfram Kernel: {}", versions.kernel);
     println!("WolframScript: {}", versions.wolframscript);
     println!("Type :help for commands, :quit or Ctrl-D to quit.\n");
@@ -340,7 +341,7 @@ fn print_styled_welcome_details(versions: &WolframVersions, theme: &ThemeHandle)
         "  {} {} {}",
         accent.paint("◆"),
         title.paint("Wolfie        "),
-        muted.paint(format!("{}", env!("CARGO_PKG_VERSION")))
+        muted.paint(version::NAME)
     );
     println!(
         "  {} {} {}",

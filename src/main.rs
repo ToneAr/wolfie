@@ -9,6 +9,7 @@ mod native_wstp;
 mod profiler;
 mod repl;
 mod theme;
+mod version;
 mod wl;
 mod wolfram_syntax;
 
