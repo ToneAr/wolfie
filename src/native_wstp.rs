@@ -190,6 +190,20 @@ fn print_kernel_message_text(
     ))
 }
 
+fn print_startup_kernel_message_text(
+    text: &str,
+    symbol: &str,
+    tag: &str,
+    begin_on_new_line: bool,
+) -> Result<()> {
+    print_kernel_text(&render_startup_message_text(
+        text,
+        symbol,
+        tag,
+        begin_on_new_line,
+    ))
+}
+
 fn message_identifier_color_enabled(theme: Option<&ThemeHandle>) -> bool {
     color_enabled(theme)
 }
@@ -212,6 +226,18 @@ fn render_message_text_with_color(text: &str, symbol: &str, tag: &str, use_color
     } else {
         text.to_owned()
     }
+}
+
+fn render_startup_message_text(
+    text: &str,
+    symbol: &str,
+    tag: &str,
+    begin_on_new_line: bool,
+) -> String {
+    let message = render_message_text_with_color(text, symbol, tag, false);
+    let message = message.trim_end_matches(['\r', '\n']);
+    let prefix = if begin_on_new_line { "\r\n" } else { "" };
+    format!("{prefix}{message}\r\n")
 }
 
 fn message_text_identifier<'a>(
@@ -705,6 +731,7 @@ fn put_enter_text_packet(link: &mut Link, input: &str) -> Result<()> {
 
 fn read_initial_input_name_packet(link: &mut Link, process: &mut KernelProcess) -> Result<String> {
     let mut pending_message_identifier: Option<(String, String)> = None;
+    let mut startup_message_printed = false;
 
     loop {
         let packet_id = next_packet_id(link, process, "initial prompt")?;
@@ -721,7 +748,13 @@ fn read_initial_input_name_packet(link: &mut Link, process: &mut KernelProcess) 
             }
             KernelPacket::Text(text) => {
                 if let Some((symbol, tag)) = pending_message_identifier.take() {
-                    print_kernel_message_text(text, &symbol, &tag, None)?;
+                    print_startup_kernel_message_text(
+                        text,
+                        &symbol,
+                        &tag,
+                        !startup_message_printed,
+                    )?;
+                    startup_message_printed = true;
                 }
             }
             KernelPacket::Input | KernelPacket::InputString => {
@@ -1374,8 +1407,9 @@ mod tests {
     use super::{
         KernelExit, KernelPacket, configure_kernel_launch_command, connect_link_args,
         kernel_exit_result, next_input_prompt_after_evaluation, plain_text_result_input,
-        render_message_text_with_color, render_output_name_with_color, rendered_return_text,
-        set_directory_expression, wrap_to_string_query,
+        render_message_text_with_color, render_output_name_with_color,
+        render_startup_message_text, rendered_return_text, set_directory_expression,
+        wrap_to_string_query,
     };
     use std::process::{Command, ExitStatus};
 
@@ -1538,6 +1572,32 @@ mod tests {
                 "                                 1\n{}: Infinite expression - encountered.                                 0\n",
                 nu_ansi_term::Color::Red.paint("Power::infy")
             )
+        );
+    }
+
+    #[test]
+    fn startup_message_starts_on_a_fresh_line_and_has_one_terminator() {
+        assert_eq!(
+            render_startup_message_text(
+                "Get::noopen: Cannot open WAssistant`Server`.\n",
+                "Get",
+                "noopen",
+                true,
+            ),
+            "\r\nGet::noopen: Cannot open WAssistant`Server`.\r\n"
+        );
+    }
+
+    #[test]
+    fn startup_message_preserves_internal_line_breaks() {
+        assert_eq!(
+            render_startup_message_text(
+                "Needs::nocont: Context WAssistant`Server`\nwas not created.\n",
+                "Needs",
+                "nocont",
+                false,
+            ),
+            "Needs::nocont: Context WAssistant`Server`\nwas not created.\r\n"
         );
     }
 
