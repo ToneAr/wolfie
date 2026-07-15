@@ -252,7 +252,9 @@ fn lock_kernel_for_repl_input(
             }
             Err(std::sync::TryLockError::WouldBlock) => {
                 if started_waiting.elapsed() >= KERNEL_INIT_WARNING_GRACE {
-                    return Ok((lock_kernel(kernel)?, true));
+                    let kernel = lock_kernel(kernel)?;
+                    let may_be_slow = kernel_may_be_slow_to_respond(kernel.status());
+                    return Ok((kernel, may_be_slow));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
