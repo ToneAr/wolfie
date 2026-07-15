@@ -14,7 +14,6 @@ use std::{
 use std::os::unix::process::CommandExt;
 
 use anyhow::{Context, Result, anyhow, bail};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use nu_ansi_term::Color;
 use wolfram_expr::{Expr, ExprKind, Symbol};
 pub(crate) use wstp::Protocol as LinkProtocol;
@@ -920,9 +919,13 @@ fn wait_for_packet_activity(
             return kernel_exit_result(status, operation);
         }
 
-        // Connected kernels have no local child process to inspect, but they
-        // must still poll terminal input so Ctrl-C can send WSAbortMessage.
-        if take_kernel_interrupt_request() {
+        // Ctrl-C is observed only through the SIGINT flag. Packet waits run
+        // with the terminal in cooked mode (reedline is suspended during
+        // foreground evaluations), where Ctrl-C becomes SIGINT and never
+        // arrives as a key event — and they also run on background completion
+        // threads while reedline owns the terminal, where reading key events
+        // silently steals typed-ahead keystrokes from the user.
+        if interrupt::take_kernel_interrupt_request() {
             send_abort_message(link)?;
         }
         thread::sleep(Duration::from_millis(10));
@@ -937,38 +940,6 @@ fn kernel_exit_result(status: ExitStatus, operation: &str) -> Result<()> {
     }
 
     bail!("WolframKernel exited with {status} during {operation}")
-}
-
-fn take_kernel_interrupt_request() -> bool {
-    interrupt::take_kernel_interrupt_request() || take_ctrl_c_key_event()
-}
-
-fn take_ctrl_c_key_event() -> bool {
-    match event::poll(Duration::from_millis(0)) {
-        Ok(true) => match event::read() {
-            Ok(event) => is_ctrl_c_key_event(&event),
-            Err(err) => {
-                profile_event(format!("terminal.event.read.failed\t{err:?}"));
-                false
-            }
-        },
-        Ok(false) => false,
-        Err(err) => {
-            profile_event(format!("terminal.event.poll.failed\t{err:?}"));
-            false
-        }
-    }
-}
-
-fn is_ctrl_c_key_event(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('c') | KeyCode::Char('C'),
-            modifiers: KeyModifiers::CONTROL,
-            ..
-        })
-    )
 }
 
 fn send_abort_message(link: &mut Link) -> Result<()> {
