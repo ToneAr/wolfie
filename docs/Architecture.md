@@ -7,7 +7,7 @@ This document describes how `wolfie` starts, evaluates Wolfram Language input, t
 `wolfie` is a Rust terminal application with three user-facing execution modes:
 
 1. Interactive REPL, the default `wolfie` / `cargo run` path.
-2. One-shot expression evaluation with `--eval` / `-e`.
+2. One-shot expression evaluation with `--code` / `-c`.
 3. Script execution with `--file` / `-f`.
 
 All three execution modes use the native WSTP backend. Script files are read by
@@ -22,7 +22,7 @@ flowchart TD
 
     Args --> EvalMode{Mode}
     EvalMode -->|no args| Repl[src/repl.rs]
-    EvalMode -->|-e or --eval| OneShot[KernelClient::evaluate_once]
+    EvalMode -->|-c or --code| OneShot[KernelClient::evaluate_once]
     EvalMode -->|--file or -f| Script[KernelClient::evaluate_file]
 
     Repl --> Reedline[reedline editor]
@@ -56,7 +56,7 @@ flowchart TD
     Branch -->|eval present, file absent| Eval[KernelClient::new then evaluate_once]
     Branch -->|file present, eval absent| File[KernelClient::new then evaluate_file]
     Branch -->|neither present| Repl[run_repl]
-    Branch -->|both present| Error[bail: use either --eval or file]
+    Branch -->|both present| Error[bail: use either --code or file]
 
     Eval --> ExitMap[map KernelExit to process exit code]
     File --> ExitMap
@@ -68,7 +68,7 @@ flowchart TD
 | Mode                | User command                       | Runtime path                  | Kernel lifetime                 | Backend |
 | ------------------- | ---------------------------------- | ----------------------------- | ------------------------------- | ------- |
 | REPL                | `wolfie`                           | `run_repl`                    | Persistent until quit           | WSTP    |
-| One-shot expression | `wolfie -e 'Range[5]^2'`           | `KernelClient::evaluate_once` | One process for that evaluation | WSTP    |
+| One-shot expression | `wolfie -c 'Range[5]^2'`           | `KernelClient::evaluate_once` | One process for that evaluation | WSTP    |
 | Script file         | `wolfie --file script.wls -- arg1` | `KernelClient::evaluate_file` | One process for that script     | WSTP    |
 
 ## Kernel discovery
@@ -161,7 +161,7 @@ Human-entered input uses `EnterTextPacket`, which asks the kernel to parse and e
 
 This path is used by:
 
-- `KernelClient::evaluate_once` for `-e` / `--eval`.
+- `KernelClient::evaluate_once` for `-c` / `--code`.
 - `KernelClient::evaluate_repl_input` for REPL submissions.
 
 ```mermaid
@@ -490,11 +490,11 @@ flowchart TD
 
 When evaluation behavior is wrong, check the pipeline in this order:
 
-1. **Mode selection**: confirm whether the path is REPL, `--eval`, or script file delegation.
+1. **Mode selection**: confirm whether the path is REPL, `--code`, or script file delegation.
 2. **Kernel discovery**: set `WOLFRAM_KERNEL` to a known `WolframKernel` binary to bypass discovery.
 3. **WSTP launch**: verify the kernel can start with `-wstp` and the platform has matching WSTP libraries at build time.
 4. **Initial prompt**: first-use delays often happen while reading the initial `InputNamePacket` and doing the first real evaluation.
 5. **Packet stream**: enable profiling or add packet tracing around `trace_packet` in `src/native_wstp.rs`.
 6. **Human vs query path**: remember that user evaluation uses `EnterTextPacket`, while completions and internal lookups use `EvaluatePacket` plus `wrap_to_string_query`.
-7. **Input prompts**: `Input[]` and `InputString[]` require an REPL input handler. One-shot `--eval` does not supply one, so a kernel input request during that operation is an error.
+7. **Input prompts**: `Input[]` and `InputString[]` require an REPL input handler. One-shot `--code` does not supply one, so a kernel input request during that operation is an error.
 8. **Completion staleness**: after evaluation, the completion epoch increments; old cache entries should not be reused.

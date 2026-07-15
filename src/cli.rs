@@ -51,7 +51,7 @@ struct Args {
     skip_config: bool,
 
     /// Evaluate a Wolfram Language expression and exit.
-    #[arg(short = 'e', long = "eval")]
+    #[arg(short = 'c', long = "code")]
     eval: Option<String>,
 
     /// Connect to an existing WSTP link instead of launching a new kernel.
@@ -164,7 +164,7 @@ pub(crate) fn run() -> Result<()> {
                 history: !args.lightweight,
             },
         ),
-        (Some(_), Some(_)) => bail!("use either --eval or a file, not both"),
+        (Some(_), Some(_)) => bail!("use either --code or a file, not both"),
     };
 
     match result {
@@ -237,7 +237,7 @@ fn direct_script_arg_index(args: &[OsString]) -> Option<usize> {
 fn value_option_consumes_next_arg(arg: &str) -> bool {
     matches!(
         arg,
-        "-e" | "--eval" | "--linkname" | "--linkprotocol" | "--linkoptions" | "--linkmode"
+        "-c" | "--code" | "--linkname" | "--linkprotocol" | "--linkoptions" | "--linkmode"
     )
 }
 
@@ -580,10 +580,10 @@ mod tests {
     }
 
     #[test]
-    fn does_not_normalize_option_invocation_as_script() {
-        let normalized = normalized_args(os_strings(&["wolfie", "--eval", "2 + 2"]));
+    fn does_not_normalize_code_option_invocation_as_script() {
+        let normalized = normalized_args(os_strings(&["wolfie", "--code", "2 + 2"]));
 
-        assert_eq!(normalized.args, os_strings(&["wolfie", "--eval", "2 + 2"]));
+        assert_eq!(normalized.args, os_strings(&["wolfie", "--code", "2 + 2"]));
         assert!(!normalized.direct_script);
     }
 

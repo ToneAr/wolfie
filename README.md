@@ -43,7 +43,7 @@ irm https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/install.ps1 
 | Mode                | Command                          | Backend             |
 | ------------------- | -------------------------------- | ------------------- |
 | Interactive REPL    | `wolfie` or `cargo run`          | Native WSTP session |
-| One-shot expression | `wolfie -e 'Range[5]^2'`         | Native WSTP session |
+| One-shot expression | `wolfie -c 'Range[5]^2'`         | Native WSTP session |
 | Script file         | `wolfie --file script.wls -- a1` | Native WSTP session |
 
 For a detailed architecture and evaluation pipeline walkthrough, including WSTP packet flow diagrams, see [`docs/Architecture.md`](docs/Architecture.md).
@@ -72,14 +72,14 @@ This preserves evaluation, prompts, themes, syntax validation, highlighting, she
 Evaluate one expression and exit:
 
 ```sh
-wolfie -e 'Range[5]^2'
+wolfie -c 'Range[5]^2'
 ```
 
 Pass WSTP link mode and link options through to a kernel launched by `wolfie`:
 
 ```sh
 wolfie --linkmode Listen --linkoptions 4
-wolfie --linkmode Listen --linkoptions 4 -e 'Range[5]^2'
+wolfie --linkmode Listen --linkoptions 4 -c 'Range[5]^2'
 ```
 
 Connect to an existing WSTP link for the REPL, one-shot evaluation, or script
@@ -90,7 +90,7 @@ execution instead of launching a new kernel. The link protocol defaults to
 wolfie --linkconnect --linkname my-link
 wolfie --linkconnect --linkname my-link --linkprotocol TCPIP
 wolfie --linkconnect --linkname my-link --linkoptions 4 --linkinit
-wolfie --linkconnect --linkname my-link -e 'Range[5]^2'
+wolfie --linkconnect --linkname my-link -c 'Range[5]^2'
 wolfie --linkconnect --linkname my-link --file script.wls
 ```
 
