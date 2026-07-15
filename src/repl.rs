@@ -33,7 +33,7 @@ use crate::{
         kernel_may_be_slow_to_respond, kernel_status, lock_kernel, spawn_kernel_warmup,
         wolfram_versions,
     },
-    native_wstp::KernelInputRequest,
+    native_wstp::{KernelInputRequest, start_kernel_loading_indicator},
     theme::{ThemeHandle, ThemeRegistry, UserConfig, selected_theme},
     version,
     wolfram_syntax::{loaded_context_names, remember_user_symbols},
@@ -77,6 +77,16 @@ pub(crate) fn run_repl(
         let versions = wolfram_versions();
         print_welcome(use_color, &versions, &theme);
     }
+
+    // Do not expose a fallback `In[1]:=` prompt while the kernel is still
+    // completing its first WSTP handshake.
+    let startup_loading = start_kernel_loading_indicator(Some(&theme));
+    {
+        let mut kernel = lock_kernel(&kernel)?;
+        kernel.initialize_repl()?;
+    }
+    drop(startup_loading);
+
     let completion_source = features.dynamic_completion.then(|| {
         CompletionSource::new(
             kernel.clone(),

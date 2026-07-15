@@ -80,6 +80,7 @@ const LOADING_TEXT_FRAMES: [&str; 10] = [
 	"Evaluating...",
 	"Evaluating",
 ];
+const STARTING_KERNEL_TEXT_FRAMES: [&str; 10] = ["Starting Kernel..."; 10];
 const LOADING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LOADING_FRAME_INTERVAL: Duration = Duration::from_millis(80);
 
@@ -87,13 +88,13 @@ const LOADING_FRAME_INTERVAL: Duration = Duration::from_millis(80);
 ///
 /// The worker is stopped before streamed kernel text is written, preventing
 /// its terminal writes from interleaving with kernel output.
-struct LoadingIndicator {
+pub(crate) struct LoadingIndicator {
     running: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
 impl LoadingIndicator {
-    fn start(theme: Option<&ThemeHandle>) -> Option<Self> {
+    fn start(theme: Option<&ThemeHandle>, text_frames: [&'static str; 10]) -> Option<Self> {
         if !io::stdout().is_terminal() {
             return None;
         }
@@ -110,13 +111,13 @@ impl LoadingIndicator {
                         io::stdout(),
                         "\r\x1b[2K{} {}",
                         theme.current().styles().prompt_left.paint(LOADING_FRAMES[frame]),
-                        nu_ansi_term::Color::DarkGray.paint(LOADING_TEXT_FRAMES[frame]),
+                        nu_ansi_term::Color::DarkGray.paint(text_frames[frame]),
                     ),
                     None => write!(
                         io::stdout(),
                         "\r\x1b[2K   {} {}",
                         LOADING_FRAMES[frame],
-                        LOADING_TEXT_FRAMES[frame],
+                        text_frames[frame],
                     ),
                 };
                 let _ = io::stdout().flush();
@@ -132,6 +133,12 @@ impl LoadingIndicator {
             worker: Some(worker),
         })
     }
+}
+
+pub(crate) fn start_kernel_loading_indicator(
+    theme: Option<&ThemeHandle>,
+) -> Option<LoadingIndicator> {
+    LoadingIndicator::start(theme, STARTING_KERNEL_TEXT_FRAMES)
 }
 
 impl Drop for LoadingIndicator {
@@ -155,7 +162,7 @@ struct EvaluationLoadingIndicator {
 impl EvaluationLoadingIndicator {
     fn start(theme: Option<&ThemeHandle>) -> Self {
         Self {
-            indicator: LoadingIndicator::start(theme),
+            indicator: LoadingIndicator::start(theme, LOADING_TEXT_FRAMES),
             theme: theme.cloned(),
         }
     }
@@ -166,7 +173,7 @@ impl EvaluationLoadingIndicator {
 
     fn show_below_text(&mut self, text: &str) {
         if text.ends_with('\n') {
-            self.indicator = LoadingIndicator::start(self.theme.as_ref());
+            self.indicator = LoadingIndicator::start(self.theme.as_ref(), LOADING_TEXT_FRAMES);
         }
     }
 }
@@ -423,7 +430,7 @@ impl WstpKernelClient {
         self.input_prompt.as_deref()
     }
 
-    fn ensure_initial_prompt_read(&mut self) -> Result<()> {
+    pub(crate) fn ensure_initial_prompt_read(&mut self) -> Result<()> {
         if !self.initial_prompt_pending {
             return Ok(());
         }

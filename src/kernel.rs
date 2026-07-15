@@ -242,6 +242,13 @@ impl KernelClient {
         self.wstp.input_prompt().map(ToOwned::to_owned)
     }
 
+    /// Waits until the kernel has sent its first REPL prompt.
+    pub(crate) fn initialize_repl(&mut self) -> Result<()> {
+        self.wstp.ensure_initial_prompt_read()?;
+        self.ready = true;
+        Ok(())
+    }
+
     pub(crate) fn evaluate_repl_input(
         &mut self,
         input: &str,
