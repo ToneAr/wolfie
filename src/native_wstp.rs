@@ -444,6 +444,29 @@ impl WstpKernelClient {
         );
         self.input_prompt = Some(input_prompt);
         self.initial_prompt_pending = false;
+        self.disable_kernel_line_wrapping()?;
+        Ok(())
+    }
+
+    /// The kernel's WSTP text main loop wraps formatted output at `PageWidth`
+    /// measured in `$CharacterEncoding` *bytes*, splitting multi-byte UTF-8
+    /// sequences mid-character and re-encoding the wrapped text a second
+    /// time, which garbles any non-ASCII output long enough to wrap (e.g.
+    /// braille art). Disable kernel wrapping and let the terminal soft-wrap;
+    /// `decode_kernel_main_loop_text` then inverts the single remaining
+    /// encoding pass.
+    ///
+    /// The expression evaluates to a string because the kernel main loop
+    /// sends bare symbols (like the `Null` a trailing `;` would produce)
+    /// without their context, which `Link::get_expr` rejects.
+    fn disable_kernel_line_wrapping(&mut self) -> Result<()> {
+        let expr = call(
+            "System`ToExpression",
+            vec![Expr::string(
+                r#"SetOptions[#, PageWidth -> Infinity] & /@ {$Output, $Messages}; "ok""#,
+            )],
+        );
+        self.evaluate_packet_to_string(&expr)?;
         Ok(())
     }
 
@@ -1046,7 +1069,33 @@ fn read_packet_payload(link: &mut Link, packet_id: i32) -> Result<KernelPacket> 
 
 fn read_string(link: &mut Link, context: &str) -> Result<String> {
     link.get_string()
+        .map(decode_kernel_main_loop_text)
         .map_err(|err| anyhow!("failed to read {context} string: {err:?}"))
+}
+
+/// The kernel's WSTP text main loop serializes packet text (ReturnTextPacket,
+/// TextPacket, prompts, ...) through `$CharacterEncoding` before putting it on
+/// the link, so with the usual UTF-8 encoding every non-ASCII character
+/// arrives as one byte-valued character per UTF-8 byte ("⠁" becomes
+/// U+00E2 U+00A0 U+0081). Printing those codepoints directly produces
+/// mojibake; this inverts the kernel's byte-encoding.
+///
+/// Strings containing characters above U+00FF cannot be byte-encoded text and
+/// pass through unchanged, as do byte sequences that are not valid UTF-8
+/// (e.g. from a Latin-1 kernel, where the byte-valued characters already
+/// render correctly).
+pub(crate) fn decode_kernel_main_loop_text(text: String) -> String {
+    if text.is_ascii() {
+        return text;
+    }
+    let Some(bytes) = text
+        .chars()
+        .map(|char| u8::try_from(u32::from(char)).ok())
+        .collect::<Option<Vec<u8>>>()
+    else {
+        return text;
+    };
+    String::from_utf8(bytes).unwrap_or(text)
 }
 
 fn read_symbol(link: &mut Link, context: &str) -> Result<String> {
