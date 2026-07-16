@@ -463,8 +463,9 @@ impl WstpKernelClient {
         &mut self,
         input: &str,
         theme: Option<&ThemeHandle>,
+        input_handler: Option<&mut KernelInputHandler<'_>>,
     ) -> Result<()> {
-        let packets = self.evaluate_text_packets(input, theme)?;
+        let packets = self.evaluate_text_packets(input, theme, input_handler)?;
         render_packets(
             &packets,
             theme,
@@ -712,6 +713,7 @@ impl WstpKernelClient {
         &mut self,
         input: &str,
         theme: Option<&ThemeHandle>,
+        input_handler: Option<&mut KernelInputHandler<'_>>,
     ) -> Result<Vec<KernelPacket>> {
         self.ensure_initial_prompt_read()?;
         interrupt::clear_kernel_interrupt_request();
@@ -739,7 +741,7 @@ impl WstpKernelClient {
         let packets = read_packets_until_return(
             link,
             &mut self.process,
-            None,
+            input_handler,
             false,
             "WSTP EvaluatePacket text evaluation",
             None,

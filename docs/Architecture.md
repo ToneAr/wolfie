@@ -506,5 +506,5 @@ When evaluation behavior is wrong, check the pipeline in this order:
 4. **Initial prompt**: first-use delays often happen while reading the initial `InputNamePacket` and doing the first real evaluation.
 5. **Packet stream**: enable profiling or add packet tracing around `trace_packet` in `src/native_wstp.rs`.
 6. **Human vs query path**: remember that user evaluation uses `EnterTextPacket`, while completions and internal lookups use `EvaluatePacket` plus `wrap_to_string_query`.
-7. **Input prompts**: `Input[]` and `InputString[]` require an REPL input handler. One-shot `--code` does not supply one, so a kernel input request during that operation is an error.
+7. **Input prompts**: `Input[]` and `InputString[]` use the terminal input handler in the REPL, one-shot `--code`, and script modes.
 8. **Completion staleness**: after evaluation, the completion epoch increments; old cache entries should not be reused.

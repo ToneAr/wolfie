@@ -3,7 +3,7 @@ use std::{
     error::Error,
     ffi::OsString,
     fmt, fs,
-    io::{self, Write},
+    io::{self, BufRead, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -201,7 +201,9 @@ impl KernelClient {
     pub(crate) fn evaluate_once(&mut self, input: &str, use_color: bool) -> Result<()> {
         let theme = (!use_color).then(|| ThemeHandle::builtin(Theme::plain()));
         if !self.evaluate_top_level_run(input, theme.as_ref())? {
-            self.evaluate_text(input, theme.as_ref())?;
+            let mut input_handler =
+                |request: &native_wstp::KernelInputRequest| read_terminal_input(request);
+            self.evaluate_text(input, theme.as_ref(), Some(&mut input_handler))?;
         }
         Ok(())
     }
@@ -228,9 +230,8 @@ impl KernelClient {
         );
         let theme = (!use_color).then(|| ThemeHandle::builtin(Theme::plain()));
 
-        let mut input_handler = |request: &native_wstp::KernelInputRequest| {
-            read_script_input(request)
-        };
+        let mut input_handler =
+            |request: &native_wstp::KernelInputRequest| read_terminal_input(request);
         self.evaluate_script(
             &input,
             theme.as_ref(),
@@ -334,13 +335,20 @@ impl KernelClient {
         let Some(exit_code) = top_level_run_exit_code(input)? else {
             return Ok(false);
         };
-        self.evaluate_text(&exit_code.to_string(), theme)?;
+        self.evaluate_text(&exit_code.to_string(), theme, None)?;
         Ok(true)
     }
 
-    fn evaluate_text(&mut self, input: &str, theme: Option<&ThemeHandle>) -> Result<()> {
+    fn evaluate_text(
+        &mut self,
+        input: &str,
+        theme: Option<&ThemeHandle>,
+        input_handler: Option<
+            &mut dyn FnMut(&native_wstp::KernelInputRequest) -> Result<Option<String>>,
+        >,
+    ) -> Result<()> {
         let _activity = ActivityGuard::new(self.active.clone());
-        self.wstp.evaluate_text_once(input, theme)?;
+        self.wstp.evaluate_text_once(input, theme, input_handler)?;
         self.ready = true;
         Ok(())
     }
@@ -376,16 +384,26 @@ impl KernelClient {
     }
 }
 
-fn read_script_input(request: &native_wstp::KernelInputRequest) -> Result<Option<String>> {
+fn read_terminal_input(request: &native_wstp::KernelInputRequest) -> Result<Option<String>> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    read_input_from_streams(request, &mut stdin.lock(), &mut stdout.lock())
+}
+
+fn read_input_from_streams<R: BufRead, W: Write>(
+    request: &native_wstp::KernelInputRequest,
+    input_reader: &mut R,
+    output: &mut W,
+) -> Result<Option<String>> {
     if !request.prompt.is_empty() {
-        print!("{}", request.prompt);
-        io::stdout().flush().context("failed to flush script input prompt")?;
+        write!(output, "{}", request.prompt).context("failed to write input prompt")?;
+        output.flush().context("failed to flush input prompt")?;
     }
 
     let mut input = String::new();
-    if io::stdin()
+    if input_reader
         .read_line(&mut input)
-        .context("failed to read script input")?
+        .context("failed to read input")?
         == 0
     {
         return Ok(None);
@@ -453,10 +471,28 @@ fn os_string_to_wolfram_string(value: &std::ffi::OsStr, label: &str) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::{
-        ScriptInvocation, script_command_line, script_evaluation_environment,
-        script_input_file_name, strip_shebang_preserving_line_numbers,
+        ScriptInvocation, read_input_from_streams, script_command_line,
+        script_evaluation_environment, script_input_file_name,
+        strip_shebang_preserving_line_numbers,
     };
-    use std::{env, ffi::OsString, path::Path};
+    use crate::native_wstp::{KernelInputKind, KernelInputRequest};
+    use std::{env, ffi::OsString, io::Cursor, path::Path};
+
+    #[test]
+    fn terminal_input_writes_prompt_and_strips_line_ending() {
+        let request = KernelInputRequest {
+            kind: KernelInputKind::Expression,
+            prompt: "> ".to_string(),
+        };
+        let mut input = Cursor::new(b"1 + 1\r\n");
+        let mut output = Vec::new();
+
+        let response = read_input_from_streams(&request, &mut input, &mut output)
+            .expect("terminal input should be read");
+
+        assert_eq!(response, Some("1 + 1".to_string()));
+        assert_eq!(output, b"> ");
+    }
 
     #[test]
     fn strips_shebang_without_changing_following_line_numbers() {
