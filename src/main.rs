@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod completion;
 mod editor;
+mod graphical_output;
 mod highlighter;
 mod interrupt;
 mod kernel;

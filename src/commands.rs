@@ -268,6 +268,12 @@ fn run_settings_menu(theme: &ThemeHandle, use_color: bool) -> Result<()> {
                 "Initialize linkoptions=4 connected kernels in Wolfie's launch directory",
                 |command| &mut command.linkinit,
             )?,
+            "14" | "graphical-output" | "graphics" => configure_bool(
+                &mut config,
+                "graphical-output",
+                "Display graphical results using a terminal image backend",
+                |command| &mut command.graphical_output,
+            )?,
             "e" | "edit" => {
                 edit_config_file()?;
                 config = load_user_config();
@@ -345,6 +351,10 @@ fn print_settings_menu(config: &UserConfig, theme: &ThemeHandle) {
         (
             "13. linkinit              ",
             option_label(config.command.linkinit),
+        ),
+        (
+            "14. graphical-output      ",
+            option_label(config.command.graphical_output),
         ),
     ];
     let option_width = options

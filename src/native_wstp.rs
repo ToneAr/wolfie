@@ -20,13 +20,14 @@ pub(crate) use wstp::Protocol as LinkProtocol;
 use wstp::{Link, UrgentMessage, sys};
 
 use crate::{
+    graphical_output::GraphicalOutputBackend,
     interrupt,
     kernel::{KernelExit, kernel_path},
     profiler::{profile_duration, profile_duration_with, profile_event, profile_event_with},
     theme::ThemeHandle,
     wl::{
-        SECONDARY_LINK_SETUP_INPUT_WL, WSTP_EVALUATE_USER_INPUT_WL, wolfram_function_call,
-        wolfram_string_literal,
+        GRAPHICAL_OUTPUT_QUERY_WL, SECONDARY_LINK_SETUP_INPUT_WL, WSTP_EVALUATE_USER_INPUT_WL,
+        wolfram_function_call, wolfram_string_literal,
     },
 };
 
@@ -327,6 +328,7 @@ pub(crate) struct WstpKernelClient {
     input_prompt: Option<String>,
     initial_prompt_pending: bool,
     pending_current_directory: Option<PathBuf>,
+    graphical_output: Option<GraphicalOutputBackend>,
 }
 
 impl WstpKernelClient {
@@ -368,6 +370,7 @@ impl WstpKernelClient {
             input_prompt: None,
             initial_prompt_pending: true,
             pending_current_directory: None,
+            graphical_output: None,
         })
     }
 
@@ -406,6 +409,7 @@ impl WstpKernelClient {
             input_prompt: None,
             initial_prompt_pending: true,
             pending_current_directory: None,
+            graphical_output: None,
         })
     }
 
@@ -458,6 +462,11 @@ impl WstpKernelClient {
         let packets = self.evaluate_input_packets(input, input_handler, theme, rewrite_input)?;
         let input_prompt =
             next_input_prompt_after_evaluation(previous_input_prompt.as_deref(), &packets);
+        let svg = if self.graphical_output.is_some() && last_output_name(&packets).is_some() {
+            self.graphical_output_for_last_result()?
+        } else {
+            None
+        };
         render_packets(
             &packets,
             theme,
@@ -465,6 +474,7 @@ impl WstpKernelClient {
                 separate_input_and_output,
                 show_output_prompt,
             },
+            self.graphical_output.as_ref().zip(svg.as_deref()),
         )?;
         if let Some(input_prompt) = input_prompt {
             self.input_prompt = Some(input_prompt);
@@ -486,11 +496,23 @@ impl WstpKernelClient {
                 separate_input_and_output: false,
                 show_output_prompt: false,
             },
+            None,
         )
     }
 
     pub(crate) fn input_prompt(&self) -> Option<&str> {
         self.input_prompt.as_deref()
+    }
+
+    pub(crate) fn set_graphical_output(
+        &mut self,
+        graphical_output: Option<GraphicalOutputBackend>,
+    ) {
+        self.graphical_output = graphical_output;
+    }
+
+    pub(crate) fn graphical_output_enabled(&self) -> bool {
+        self.graphical_output.is_some()
     }
 
     /// Reads packets emitted while no evaluation is in flight, such as output
@@ -632,6 +654,12 @@ impl WstpKernelClient {
         let wrapped = wrap_to_string_query(input);
         let expr = call("System`ToExpression", vec![Expr::string(&wrapped)]);
         self.evaluate_packet_to_string(&expr)
+    }
+
+    fn graphical_output_for_last_result(&mut self) -> Result<Option<String>> {
+        let query = wolfram_function_call(GRAPHICAL_OUTPUT_QUERY_WL, &["%".to_string()]);
+        let svg = self.evaluate_to_string(&query)?;
+        Ok((svg.contains("<svg")).then_some(svg))
     }
 
     pub(crate) fn initialize_current_directory(&mut self, directory: &Path) -> Result<()> {
@@ -1740,6 +1768,7 @@ fn render_packets(
     packets: &[KernelPacket],
     theme: Option<&ThemeHandle>,
     options: PacketRenderOptions,
+    mut graphical_output: Option<(&GraphicalOutputBackend, &str)>,
 ) -> Result<()> {
     let mut output_name: Option<&str> = None;
     let mut text_without_trailing_newline = false;
@@ -1770,7 +1799,13 @@ fn render_packets(
                     text_without_trailing_newline = false;
                 }
                 let text = expr_string_value(expr).unwrap_or_else(|| expr.to_string());
-                render_return_text(&text, output_name.take(), theme, options.show_output_prompt)?;
+                render_result(
+                    &text,
+                    output_name.take(),
+                    theme,
+                    options.show_output_prompt,
+                    graphical_output.take(),
+                )?;
                 if options.separate_input_and_output && !text.is_empty() {
                     print_kernel_text("\n")?;
                 }
@@ -1784,7 +1819,13 @@ fn render_packets(
                     print_kernel_text("\n")?;
                     text_without_trailing_newline = false;
                 }
-                render_return_text(text, output_name.take(), theme, options.show_output_prompt)?;
+                render_result(
+                    text,
+                    output_name.take(),
+                    theme,
+                    options.show_output_prompt,
+                    graphical_output.take(),
+                )?;
                 if options.separate_input_and_output && !text.is_empty() {
                     print_kernel_text("\n")?;
                 }
@@ -1840,6 +1881,30 @@ fn render_return_text(
 ) -> Result<()> {
     if let Some(text) = rendered_return_text(text, output_name, theme, show_output_prompt) {
         println!("{text}");
+    }
+    Ok(())
+}
+
+fn render_result(
+    text: &str,
+    output_name: Option<&str>,
+    theme: Option<&ThemeHandle>,
+    show_output_prompt: bool,
+    graphical_output: Option<(&GraphicalOutputBackend, &str)>,
+) -> Result<()> {
+    let Some((backend, svg)) = graphical_output else {
+        return render_return_text(text, output_name, theme, show_output_prompt);
+    };
+
+    if show_output_prompt && let Some(output_name) = output_name {
+        print_kernel_text(&format!(
+            "{}\n",
+            render_output_name_with_color(output_name, output_name_color_enabled(theme))
+        ))?;
+    }
+    if let Err(err) = backend.display_svg(svg) {
+        eprintln!("Wolfie::graphics: {err:#}; using textual output");
+        render_return_text(text, None, theme, false)?;
     }
     Ok(())
 }

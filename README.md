@@ -190,6 +190,19 @@ wolfie --completion-ghost-text
 wolfie --no-completion-menu
 ```
 
+Display graphical results inline in a compatible terminal with:
+
+```sh
+wolfie --graphical-output
+```
+
+This opt-in mode exports graphical Wolfram Language results with
+`ExportString[graphic, "SVG"]` and tries available backends in this order:
+`kitten icat`, `kitty +kitten icat`, `wezterm imgcat`, then `chafa`. If no
+supported backend is available, Wolfie retains its normal textual output. The
+default can also be saved as `"graphical-output": true` under `command` in
+`config.json`.
+
 The same defaults can be set in `config.json` under `command` with `completion-ghost-text` and `no-completion-menu`. The legacy `no-completion-ghost-text` key is still accepted for disabling a previously enabled ghost-text default. `--no-completion-menu` only hides the popup; use `--lightweight` when the completion workers, caches, highlighting queries, and kernel completion traffic must also be disabled.
 
 ## Commands
@@ -245,6 +258,7 @@ wolfie --skip-config
 		"completion-ghost-text": false,
 		"no-completion-ghost-text": false,
 		"no-completion-menu": false,
+		"graphical-output": false,
 		"linkconnect": false,
 		"linkname": "my-link",
 		"linkprotocol": "SharedMemory",

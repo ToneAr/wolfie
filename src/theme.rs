@@ -487,6 +487,12 @@ pub(crate) struct CommandConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) no_completion_menu: Option<bool>,
+    #[serde(
+        rename = "graphical-output",
+        alias = "graphical_output",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) graphical_output: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) linkconnect: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -510,6 +516,7 @@ impl CommandConfig {
             && self.completion_ghost_text.is_none()
             && self.no_completion_ghost_text.is_none()
             && self.no_completion_menu.is_none()
+            && self.graphical_output.is_none()
             && self.linkconnect.is_none()
             && self.linkname.is_none()
             && self.linkprotocol.is_none()

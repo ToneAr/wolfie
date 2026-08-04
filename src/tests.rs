@@ -279,6 +279,17 @@ fn script_source_evaluation_only_returns_explicit_return_values() {
 }
 
 #[test]
+fn graphical_output_query_exports_detected_graphics_as_svg() {
+    let compact_source = GRAPHICAL_OUTPUT_QUERY_WL
+        .split_whitespace()
+        .collect::<String>();
+
+    assert!(compact_source.contains("ToBoxes[graphic]"));
+    assert!(compact_source.contains("_GraphicsBox|_Graphics3DBox|_RasterBox"));
+    assert!(compact_source.contains("ExportString[graphic,\"SVG\"]"));
+}
+
+#[test]
 fn symbol_completion_query_loads_candidates_for_fuzzy_matching() {
     let query = symbol_completion_query("LP");
     let compact_query = query.split_whitespace().collect::<String>();

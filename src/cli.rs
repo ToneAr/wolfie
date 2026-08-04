@@ -5,6 +5,7 @@ use clap::Parser;
 
 use crate::{
     commands::ConfigMode,
+    graphical_output::GraphicalOutputBackend,
     kernel::{KernelClient, KernelConnection, KernelExit, ScriptInvocation},
     native_wstp::LinkProtocol,
     repl::{ReplFeatures, run_repl},
@@ -45,6 +46,10 @@ struct Args {
     /// Disable the popup completion menu.
     #[arg(long = "no-completion-menu")]
     no_completion_menu: bool,
+
+    /// Display graphical results inline using an available terminal image backend.
+    #[arg(long = "graphical-output")]
+    graphical_output: bool,
 
     /// Ignore user config and use fresh in-memory defaults for this session.
     #[arg(long = "skip-config")]
@@ -110,6 +115,7 @@ struct EffectiveArgs {
     no_prompt: bool,
     no_completion_ghost_text: bool,
     no_completion_menu: bool,
+    graphical_output: bool,
     config_mode: ConfigMode,
     eval: Option<String>,
     link_connect: bool,
@@ -133,6 +139,17 @@ pub(crate) fn run() -> Result<()> {
     let args = effective_args(parsed, config.clone())?;
 
     let use_color = !args.no_color;
+    let graphical_output = if args.graphical_output {
+        let backend = GraphicalOutputBackend::detect();
+        if backend.is_none() {
+            eprintln!(
+                "Wolfie::graphics: no supported terminal image backend found; using textual output"
+            );
+        }
+        backend
+    } else {
+        None
+    };
     let link_init_directory = if args.link_init {
         Some(env::current_dir().context("failed to determine wolfie launch directory")?)
     } else {
@@ -140,15 +157,10 @@ pub(crate) fn run() -> Result<()> {
     };
     let connection = kernel_connection(&args, link_init_directory)?;
     let result = match (args.eval, args.file) {
-        (Some(expr), None) => {
-            KernelClient::with_connection(connection)?.evaluate_once(&expr, use_color)
-        }
-        (None, Some(file)) => KernelClient::with_connection(connection)?.evaluate_file(
-            &file,
-            &args.script_args,
-            args.script_invocation,
-            use_color,
-        ),
+        (Some(expr), None) => KernelClient::with_connection(connection, graphical_output)?
+            .evaluate_once(&expr, use_color),
+        (None, Some(file)) => KernelClient::with_connection(connection, graphical_output)?
+            .evaluate_file(&file, &args.script_args, args.script_invocation, use_color),
         (None, None) => run_repl(
             use_color,
             !args.no_welcome,
@@ -162,6 +174,7 @@ pub(crate) fn run() -> Result<()> {
                 completion_ghost_text: !args.no_completion_ghost_text,
                 completion_menu: !args.no_completion_menu,
                 history: !args.lightweight,
+                graphical_output,
             },
         ),
         (Some(_), Some(_)) => bail!("use either --code or a file, not both"),
@@ -325,6 +338,7 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
         no_completion_menu: lightweight
             || args.no_completion_menu
             || command.no_completion_menu.unwrap_or(false),
+        graphical_output: args.graphical_output || command.graphical_output.unwrap_or(false),
         eval: args.eval,
         link_connect,
         link_name: if link_connect {
@@ -496,6 +510,34 @@ mod tests {
         let args = effective(Args::try_parse_from(["wolfie"]).expect("default args should parse"));
 
         assert!(!args.lightweight);
+    }
+
+    #[test]
+    fn graphical_output_is_disabled_by_default() {
+        let args = effective(Args::try_parse_from(["wolfie"]).expect("default args should parse"));
+
+        assert!(!args.graphical_output);
+    }
+
+    #[test]
+    fn graphical_output_can_be_enabled_by_flag_or_config() {
+        let cli_args = effective(
+            Args::try_parse_from(["wolfie", "--graphical-output"])
+                .expect("graphical output flag should parse"),
+        );
+        assert!(cli_args.graphical_output);
+
+        let config_args = effective_with_config(
+            Args::try_parse_from(["wolfie"]).expect("default args should parse"),
+            UserConfig {
+                command: CommandConfig {
+                    graphical_output: Some(true),
+                    ..CommandConfig::default()
+                },
+                ..UserConfig::default()
+            },
+        );
+        assert!(config_args.graphical_output);
     }
 
     #[test]
