@@ -141,9 +141,15 @@ Quick list of all features:
 
     ![commands](docs/img/commands.png)
 
-6. **Quick shell mode (:!)**
+6. **Quick shell mode with command autocompletion (:!)**
 
     ![shell](docs/img/shell.png)
+
+7. **Graphical Output\***
+
+    ![graphics](docs/img/graphics.png)
+
+> \* Has to be enabled with `graphical-output` option.
 
 ## Completion
 
