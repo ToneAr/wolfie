@@ -36,13 +36,47 @@ curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/insta
 irm https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/install.ps1 | iex
 ```
 
+## TL;DR
+
+Quick list of all features:
+
+1. **Symbol completion**
+
+    ![symbols](docs/img/symbols.png)
+
+2. **Context completion**
+
+    ![contexts](docs/img/contexts.png)
+
+3. **Fuzzy matching** **[WIP]**
+
+    ![fuzzy](docs/img/fuzzy.png)
+
+4. **File and directory autocomplete**
+
+    ![filesystem](docs/img/filesystem.png)
+
+5. **System command completion (:)**
+
+    ![commands](docs/img/commands.png)
+
+6. **Quick shell mode with command autocompletion (:!)**
+
+    ![shell](docs/img/shell.png)
+
+7. **Graphical Output\***
+
+    ![graphics](docs/img/graphics.png)
+
+> \* Has to be enabled with `graphical-output` option.
+
 ## Usage
 
 `wolfie` has three user-facing execution modes:
 
 | Mode                | Command                          | Backend             |
 | ------------------- | -------------------------------- | ------------------- |
-| Interactive REPL    | `wolfie` or `cargo run`          | Native WSTP session |
+| Interactive REPL    | `wolfie`                         | Native WSTP session |
 | One-shot expression | `wolfie -c 'Range[5]^2'`         | Native WSTP session |
 | Script file         | `wolfie --file script.wls -- a1` | Native WSTP session |
 
@@ -116,40 +150,6 @@ The script source is split into top-level Wolfram Language expressions by the
 kernel reader and evaluated sequentially in one WSTP session. Only the final
 expression result is returned, while earlier expressions share state with later
 ones.
-
-## TL;DR
-
-Quick list of all features:
-
-1. **Symbol completion**
-
-    ![symbols](docs/img/symbols.png)
-
-2. **Context completion**
-
-    ![contexts](docs/img/contexts.png)
-
-3. **Fuzzy matching** **[WIP]**
-
-    ![fuzzy](docs/img/fuzzy.png)
-
-4. **File and directory autocomplete**
-
-    ![filesystem](docs/img/filesystem.png)
-
-5. **System command completion (:)**
-
-    ![commands](docs/img/commands.png)
-
-6. **Quick shell mode with command autocompletion (:!)**
-
-    ![shell](docs/img/shell.png)
-
-7. **Graphical Output\***
-
-    ![graphics](docs/img/graphics.png)
-
-> \* Has to be enabled with `graphical-output` option.
 
 ## Completion
 
