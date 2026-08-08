@@ -73,6 +73,14 @@
 					"description": "Alias for no-completion-menu.",
 					"type": "boolean"
 				},
+				"graphical-output": {
+					"description": "Display graphical results inline using an available terminal image backend. Disabled by default.",
+					"type": "boolean"
+				},
+				"graphical_output": {
+					"description": "Alias for graphical-output.",
+					"type": "boolean"
+				},
 				"linkconnect": {
 					"description": "Connect to an existing WSTP link instead of launching a new kernel.",
 					"type": "boolean"
@@ -135,6 +143,7 @@
 				"no-prompt": false,
 				"completion-ghost-text": false,
 				"no-completion-menu": false,
+				"graphical-output": false,
 				"linkconnect": false,
 				"linkname": "my-link",
 				"linkprotocol": "SharedMemory",

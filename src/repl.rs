@@ -27,6 +27,7 @@ use crate::{
         HistoryTrigger, WolframPrompt, WolframValidator, completion_edit_mode, completion_menu,
         history_menu, history_path, history_primed_edit_mode,
     },
+    graphical_output::GraphicalOutputBackend,
     highlighter::WolframHighlighter,
     kernel::{
         KernelClient, KernelConnection, SharedKernel, WolframVersions, kernel_input_prompt,
@@ -39,13 +40,14 @@ use crate::{
     wolfram_syntax::{loaded_context_names, remember_user_symbols},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplFeatures {
     pub(crate) kernel_warmup: bool,
     pub(crate) dynamic_completion: bool,
     pub(crate) completion_ghost_text: bool,
     pub(crate) completion_menu: bool,
     pub(crate) history: bool,
+    pub(crate) graphical_output: Option<GraphicalOutputBackend>,
 }
 
 pub(crate) fn run_repl(
@@ -60,7 +62,10 @@ pub(crate) fn run_repl(
     let completion_epoch = Arc::new(AtomicU64::new(0));
     let shell_prompt_hidden = Arc::new(AtomicBool::new(false));
     let user_symbols = Arc::new(Mutex::new(HashSet::new()));
-    let kernel = Arc::new(Mutex::new(KernelClient::with_connection(connection)?));
+    let kernel = Arc::new(Mutex::new(KernelClient::with_connection(
+        connection,
+        features.graphical_output.clone(),
+    )?));
     if features.kernel_warmup {
         spawn_kernel_warmup(kernel.clone());
     }

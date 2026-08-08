@@ -36,13 +36,47 @@ curl -fsSL https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/insta
 irm https://raw.githubusercontent.com/ToneAr/wolfie/main/installers/install.ps1 | iex
 ```
 
+## TL;DR
+
+Quick list of all features:
+
+1. **Symbol completion**
+
+    ![symbols](docs/img/symbols.png)
+
+2. **Context completion**
+
+    ![contexts](docs/img/contexts.png)
+
+3. **Fuzzy matching** **[WIP]**
+
+    ![fuzzy](docs/img/fuzzy.png)
+
+4. **File and directory autocomplete**
+
+    ![filesystem](docs/img/filesystem.png)
+
+5. **System command completion (:)**
+
+    ![commands](docs/img/commands.png)
+
+6. **Quick shell mode with command autocompletion (:!)**
+
+    ![shell](docs/img/shell.png)
+
+7. **Graphical Output\***
+
+    ![graphics](docs/img/graphics.png)
+
+> \* Has to be enabled with `graphical-output` option.
+
 ## Usage
 
 `wolfie` has three user-facing execution modes:
 
 | Mode                | Command                          | Backend             |
 | ------------------- | -------------------------------- | ------------------- |
-| Interactive REPL    | `wolfie` or `cargo run`          | Native WSTP session |
+| Interactive REPL    | `wolfie`                         | Native WSTP session |
 | One-shot expression | `wolfie -c 'Range[5]^2'`         | Native WSTP session |
 | Script file         | `wolfie --file script.wls -- a1` | Native WSTP session |
 
@@ -117,34 +151,6 @@ kernel reader and evaluated sequentially in one WSTP session. Only the final
 expression result is returned, while earlier expressions share state with later
 ones.
 
-## TL;DR
-
-Quick list of all features:
-
-1. **Symbol completion**
-
-    ![symbols](docs/img/symbols.png)
-
-2. **Context completion**
-
-    ![contexts](docs/img/contexts.png)
-
-3. **Fuzzy matching** **[WIP]**
-
-    ![fuzzy](docs/img/fuzzy.png)
-
-4. **File and directory autocomplete**
-
-    ![filesystem](docs/img/filesystem.png)
-
-5. **System command completion (:)**
-
-    ![commands](docs/img/commands.png)
-
-6. **Quick shell mode (:!)**
-
-    ![shell](docs/img/shell.png)
-
 ## Completion
 
 ### Details
@@ -189,6 +195,19 @@ Enable inline completion ghost text, or disable the popup completion menu, with:
 wolfie --completion-ghost-text
 wolfie --no-completion-menu
 ```
+
+Display graphical results inline in a compatible terminal with:
+
+```sh
+wolfie --graphical-output
+```
+
+This opt-in mode exports graphical Wolfram Language results with
+`ExportString[graphic, "SVG"]` and tries available backends in this order:
+`kitten icat`, `kitty +kitten icat`, `wezterm imgcat`, then `chafa`. If no
+supported backend is available, Wolfie retains its normal textual output. The
+default can also be saved as `"graphical-output": true` under `command` in
+`config.json`.
 
 The same defaults can be set in `config.json` under `command` with `completion-ghost-text` and `no-completion-menu`. The legacy `no-completion-ghost-text` key is still accepted for disabling a previously enabled ghost-text default. `--no-completion-menu` only hides the popup; use `--lightweight` when the completion workers, caches, highlighting queries, and kernel completion traffic must also be disabled.
 
@@ -245,6 +264,7 @@ wolfie --skip-config
 		"completion-ghost-text": false,
 		"no-completion-ghost-text": false,
 		"no-completion-menu": false,
+		"graphical-output": false,
 		"linkconnect": false,
 		"linkname": "my-link",
 		"linkprotocol": "SharedMemory",

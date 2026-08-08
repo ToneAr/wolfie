@@ -18,6 +18,7 @@ use wolfram_app_discovery::WolframApp;
 
 use crate::{
     commands::top_level_run_exit_code,
+    graphical_output::GraphicalOutputBackend,
     native_wstp,
     profiler::profile_duration,
     theme::{Theme, ThemeHandle},
@@ -165,8 +166,11 @@ impl Drop for ActivityGuard {
 }
 
 impl KernelClient {
-    pub(crate) fn with_connection(connection: KernelConnection) -> Result<Self> {
-        let wstp = match connection {
+    pub(crate) fn with_connection(
+        connection: KernelConnection,
+        graphical_output: Option<GraphicalOutputBackend>,
+    ) -> Result<Self> {
+        let mut wstp = match connection {
             KernelConnection::Launch {
                 link_options,
                 link_mode,
@@ -190,6 +194,7 @@ impl KernelClient {
                 client
             }
         };
+        wstp.set_graphical_output(graphical_output);
 
         Ok(Self {
             wstp,
@@ -203,7 +208,17 @@ impl KernelClient {
         if !self.evaluate_top_level_run(input, theme.as_ref())? {
             let mut input_handler =
                 |request: &native_wstp::KernelInputRequest| read_terminal_input(request);
-            self.evaluate_text(input, theme.as_ref(), Some(&mut input_handler))?;
+            if self.wstp.graphical_output_enabled() {
+                self.evaluate(
+                    input,
+                    theme.as_ref(),
+                    Some(&mut input_handler),
+                    false,
+                    false,
+                )?;
+            } else {
+                self.evaluate_text(input, theme.as_ref(), Some(&mut input_handler))?;
+            }
         }
         Ok(())
     }
