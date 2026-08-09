@@ -217,14 +217,23 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn falls_through_when_an_earlier_backend_fails() {
+        let directory = tempfile_directory();
+        let failing_backend = directory.join("fails");
+        let succeeding_backend = directory.join("succeeds");
+        fs::write(&failing_backend, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::write(&succeeding_backend, "#!/bin/sh\nexit 0\n").unwrap();
+        make_executable(&failing_backend);
+        make_executable(&succeeding_backend);
+
         let backend = GraphicalOutputBackend {
             candidates: vec![
-                Backend::Kitten(PathBuf::from("/bin/false")),
-                Backend::Chafa(PathBuf::from("/bin/true")),
+                Backend::Kitten(failing_backend),
+                Backend::Chafa(succeeding_backend),
             ],
         };
 
         backend.display_svg("<svg></svg>").unwrap();
+        fs::remove_dir_all(directory).ok();
     }
 
     fn tempfile_directory() -> PathBuf {
