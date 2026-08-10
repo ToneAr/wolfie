@@ -92,6 +92,7 @@ pub(crate) fn run_repl(
     }
     drop(startup_loading);
 
+
     let completion_source = features.dynamic_completion.then(|| {
         CompletionSource::new(
             kernel.clone(),

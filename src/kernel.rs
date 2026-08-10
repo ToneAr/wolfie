@@ -286,6 +286,7 @@ impl KernelClient {
         Ok(())
     }
 
+
     pub(crate) fn evaluate_repl_input(
         &mut self,
         input: &str,

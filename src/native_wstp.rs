@@ -94,6 +94,18 @@ const STARTING_KERNEL_TEXT_FRAMES: [&str; 10] = ["Evaluating",
 	"Starting Kernel...",
 	"Starting Kernel",
 ];
+const GRAPHICAL_OUTPUT_INITIALIZATION_TEXT_FRAMES: [&str; 10] = [
+    "Initializing graphical output.",
+    "Initializing graphical output.",
+    "Initializing graphical output.",
+    "Initializing graphical output..",
+    "Initializing graphical output..",
+    "Initializing graphical output..",
+    "Initializing graphical output...",
+    "Initializing graphical output...",
+    "Initializing graphical output...",
+    "Initializing graphical output",
+];
 const LOADING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LOADING_FRAME_INTERVAL: Duration = Duration::from_millis(80);
 const MAX_OUT_OF_BAND_PACKETS_PER_POLL: usize = 64;
@@ -153,6 +165,12 @@ pub(crate) fn start_kernel_loading_indicator(
     theme: Option<&ThemeHandle>,
 ) -> Option<LoadingIndicator> {
     LoadingIndicator::start(theme, STARTING_KERNEL_TEXT_FRAMES)
+}
+
+pub(crate) fn start_graphical_output_loading_indicator(
+    theme: Option<&ThemeHandle>,
+) -> Option<LoadingIndicator> {
+    LoadingIndicator::start(theme, GRAPHICAL_OUTPUT_INITIALIZATION_TEXT_FRAMES)
 }
 
 impl Drop for LoadingIndicator {
@@ -463,7 +481,10 @@ impl WstpKernelClient {
         let input_prompt =
             next_input_prompt_after_evaluation(previous_input_prompt.as_deref(), &packets);
         let svg = if self.graphical_output.is_some() && last_output_name(&packets).is_some() {
-            self.graphical_output_for_last_result()?
+            let loading = start_graphical_output_loading_indicator(theme);
+            let svg = self.graphical_output_for_last_result();
+            drop(loading);
+            svg?
         } else {
             None
         };
@@ -1960,8 +1981,8 @@ fn wrap_to_string_query(input: &str) -> String {
 mod tests {
     use super::{
         KernelExit, KernelPacket, configure_kernel_launch_command, connect_link_args,
-        expression_packet_text, input_request_prompt,
-        kernel_exit_result, next_input_prompt_after_evaluation, plain_text_result_input,
+        expression_packet_text, input_request_prompt, kernel_exit_result,
+        next_input_prompt_after_evaluation, plain_text_result_input,
         render_dialog_marker, render_message_text_with_color,
         render_output_name_with_color, render_startup_message_text,
         rendered_return_text, set_directory_expression, wrap_to_string_query,
@@ -1998,6 +2019,7 @@ mod tests {
             .status()
             .expect("failed to run test shell process")
     }
+
 
     #[test]
     fn wrap_to_string_query_returns_string_results_unconverted() {
