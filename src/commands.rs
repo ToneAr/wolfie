@@ -247,6 +247,7 @@ fn run_settings_menu(theme: &ThemeHandle, use_color: bool) -> Result<()> {
                 &mut config,
                 "linkname",
                 "WSTP link name to use with linkconnect",
+                "none",
                 |command| &mut command.linkname,
             )?,
             "10" | "linkprotocol" => configure_link_protocol(&mut config)?,
@@ -254,6 +255,7 @@ fn run_settings_menu(theme: &ThemeHandle, use_color: bool) -> Result<()> {
                 &mut config,
                 "linkmode",
                 "WSTP link mode for launching or connecting",
+                "none",
                 |command| &mut command.linkmode,
             )?,
             "12" | "linkoptions" => configure_u32(
@@ -298,63 +300,65 @@ fn print_settings_menu(config: &UserConfig, theme: &ThemeHandle) {
     println!();
     println!("{}", underline.paint("Wolfie settings:"));
     println!();
-    let linkoptions = config
-        .command
-        .linkoptions
-        .map_or_else(|| "default".to_string(), |value| value.to_string());
     let options = [
         (
             "1.  theme                 ",
-            config.theme.as_deref().unwrap_or(current_theme.name()),
+            config
+                .theme
+                .clone()
+                .unwrap_or_else(|| default_label(Theme::dark().name())),
         ),
         (
             "2.  lightweight           ",
-            option_label(config.command.lightweight),
+            option_label(config.command.lightweight, false),
         ),
         (
             "3.  no-color              ",
-            option_label(config.command.no_color),
+            option_label(config.command.no_color, false),
         ),
         (
             "4.  no-welcome            ",
-            option_label(config.command.no_welcome),
+            option_label(config.command.no_welcome, false),
         ),
         (
             "5.  no-prompt             ",
-            option_label(config.command.no_prompt),
+            option_label(config.command.no_prompt, false),
         ),
         (
             "6.  completion-ghost-text ",
-            option_label(config.command.completion_ghost_text),
+            option_label(config.command.completion_ghost_text, false),
         ),
         (
             "7.  no-completion-menu    ",
-            option_label(config.command.no_completion_menu),
+            option_label(config.command.no_completion_menu, false),
         ),
         (
             "8.  linkconnect           ",
-            option_label(config.command.linkconnect),
+            option_label(config.command.linkconnect, false),
         ),
         (
             "9.  linkname              ",
-            string_label(config.command.linkname.as_deref()),
+            string_label(config.command.linkname.as_deref(), "none"),
         ),
         (
             "10. linkprotocol          ",
-            string_label(config.command.linkprotocol.as_deref()),
+            string_label(config.command.linkprotocol.as_deref(), "SharedMemory"),
         ),
         (
             "11. linkmode              ",
-            string_label(config.command.linkmode.as_deref()),
+            string_label(config.command.linkmode.as_deref(), "none"),
         ),
-        ("12. linkoptions           ", linkoptions.as_str()),
+        (
+            "12. linkoptions           ",
+            value_label(config.command.linkoptions, "none"),
+        ),
         (
             "13. linkinit              ",
-            option_label(config.command.linkinit),
+            option_label(config.command.linkinit, false),
         ),
         (
             "14. graphical-output      ",
-            option_label(config.command.graphical_output),
+            option_label(config.command.graphical_output, false),
         ),
     ];
     let option_width = options
@@ -399,16 +403,29 @@ fn print_settings_menu(config: &UserConfig, theme: &ThemeHandle) {
     println!("q   - Quit settings editor");
 }
 
-fn option_label(value: Option<bool>) -> &'static str {
+fn default_label(value: &str) -> String {
+    format!("default ({value})")
+}
+
+fn option_label(value: Option<bool>, default: bool) -> String {
     match value {
-        Some(true) => "on",
-        Some(false) => "off",
-        None => "default",
+        Some(true) => "on".to_string(),
+        Some(false) => "off".to_string(),
+        None => default_label(if default { "on" } else { "off" }),
     }
 }
 
-fn string_label(value: Option<&str>) -> &str {
-    value.filter(|value| !value.is_empty()).unwrap_or("default")
+fn string_label(value: Option<&str>, default: &str) -> String {
+    value
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_label(default))
+}
+
+fn value_label<T: std::fmt::Display>(value: Option<T>, default: &str) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| default_label(default))
 }
 
 fn read_menu_line(prompt: &str) -> Result<String> {
@@ -433,7 +450,10 @@ fn configure_theme(config: &mut UserConfig, theme: &ThemeHandle, use_color: bool
     if input.eq_ignore_ascii_case("unset") || input.eq_ignore_ascii_case("default") {
         config.theme = None;
         save_user_config(config)?;
-        println!("Theme default cleared. Wolfie will use its built-in default next time.");
+        println!(
+            "Theme default cleared. Wolfie will use {} next time.",
+            default_label(Theme::dark().name())
+        );
         return Ok(());
     }
 
@@ -484,7 +504,7 @@ fn configure_bool(
     };
     *field(&mut config.command) = next;
     save_user_config(config)?;
-    println!("Saved {key} = {}.", option_label(next));
+    println!("Saved {key} = {}.", option_label(next, false));
     Ok(())
 }
 
@@ -492,6 +512,7 @@ fn configure_string(
     config: &mut UserConfig,
     key: &str,
     description: &str,
+    default: &str,
     field: fn(&mut CommandConfig) -> &mut Option<String>,
 ) -> Result<()> {
     println!("{key}: {description}");
@@ -506,7 +527,7 @@ fn configure_string(
     };
     *field(&mut config.command) = next.clone();
     save_user_config(config)?;
-    println!("Saved {key} = {}.", string_label(next.as_deref()));
+    println!("Saved {key} = {}.", string_label(next.as_deref(), default));
     Ok(())
 }
 
@@ -532,10 +553,7 @@ fn configure_u32(
     };
     *field(&mut config.command) = next;
     save_user_config(config)?;
-    println!(
-        "Saved {key} = {}.",
-        next.map_or("default".to_string(), |value| value.to_string())
-    );
+    println!("Saved {key} = {}.", value_label(next, "none"));
     Ok(())
 }
 
@@ -561,7 +579,10 @@ fn configure_link_protocol(config: &mut UserConfig) -> Result<()> {
     };
     config.command.linkprotocol = next.clone();
     save_user_config(config)?;
-    println!("Saved linkprotocol = {}.", string_label(next.as_deref()));
+    println!(
+        "Saved linkprotocol = {}.",
+        string_label(next.as_deref(), "SharedMemory")
+    );
     Ok(())
 }
 
@@ -843,6 +864,21 @@ mod tests {
         );
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn settings_labels_show_effective_values_for_unset_options() {
+        assert_eq!(option_label(None, false), "default (off)");
+        assert_eq!(option_label(None, true), "default (on)");
+        assert_eq!(string_label(None, "SharedMemory"), "default (SharedMemory)");
+        assert_eq!(value_label::<u32>(None, "none"), "default (none)");
+    }
+
+    #[test]
+    fn settings_labels_preserve_explicit_values() {
+        assert_eq!(option_label(Some(true), false), "on");
+        assert_eq!(string_label(Some("Listen"), "none"), "Listen");
+        assert_eq!(value_label(Some(4_u32), "none"), "4");
     }
 
     #[test]

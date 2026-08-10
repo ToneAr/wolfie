@@ -2,21 +2,24 @@
 
 ![logo](docs/img/logo.gif)
 
-`wolfie` is a Rust CLI for running Wolfram Language from the terminal with a
-WSTP-backed REPL, one-shot expression evaluation, script execution, and dynamic
-completions.
+`wolfie` is a Terminal User Interface (TUI) for running Wolfram Language from
+the terminal with a WSTP-backed REPL, one-shot expression evaluation, script
+execution, and dynamic completions.
 
 Script execution runs through the same WSTP connection machinery as expression
 and REPL evaluation, so it can use `--linkconnect` setups for persistent
 kernels.
 
-The TUI is self contained within the single `wolfie` binary and does not bundle the Wolfram Kernel.
+The TUI is self contained within the single `wolfie` binary and does not bundle
+the Wolfram Kernel.
 
 ## Installation
 
 To pin a specific beta release tag, add `--version v0.5.0`.
 
-Platform-specific installers are also available. Omit the version option to install the latest GitHub release, or pass `--version v0.5.0` / `-Version v0.5.0` to install this beta explicitly.
+Platform-specific installers are also available. Omit the version option to
+install the latest GitHub release, or pass
+`--version v0.5.0` / `-Version v0.5.0` to install this beta explicitly.
 
 ### WolframScript (All platforms)
 
@@ -80,28 +83,36 @@ Quick list of all features:
 | One-shot expression | `wolfie -c 'Range[5]^2'`         | Native WSTP session |
 | Script file         | `wolfie --file script.wls -- a1` | Native WSTP session |
 
-For a detailed architecture and evaluation pipeline walkthrough, including WSTP packet flow diagrams, see [`docs/Architecture.md`](docs/Architecture.md).
+For a detailed architecture and evaluation pipeline walkthrough, including WSTP
+packet flow diagrams, see [`docs/Architecture.md`](docs/Architecture.md).
 
-Start the interactive REPL. This uses the native WSTP backend and keeps a kernel session alive for REPL state:
+Start the interactive REPL. This uses the native WSTP backend and keeps a kernel
+session alive for REPL state:
 
 ```sh
 wolfie
 ```
 
-Use `--no-welcome` to skip the welcome banner while keeping normal input/output prompts, or `--no-prompt` to hide all REPL prompts and the welcome banner:
+Use `--no-welcome` to skip the welcome banner while keeping normal input/output
+prompts, or `--no-prompt` to hide all REPL prompts and the welcome banner:
 
 ```sh
 wolfie --no-welcome
 wolfie --no-prompt
 ```
 
-For underpowered or memory-constrained servers, use the opt-in lightweight REPL profile:
+For underpowered or memory-constrained servers, use the opt-in lightweight REPL
+profile:
 
 ```sh
 wolfie --lightweight
 ```
 
-This preserves evaluation, prompts, themes, syntax validation, highlighting, shell escapes, and REPL commands while disabling persistent history, dynamic kernel-backed completion workers/caches/queries, and background kernel warm-up. Normal `wolfie` behavior is unchanged when the flag is absent. The profile can also be saved as `"lightweight": true` under `command` in `config.json`.
+This preserves evaluation, prompts, themes, syntax validation, highlighting,
+shell escapes, and REPL commands while disabling persistent history, dynamic
+kernel-backed completion workers/caches/queries, and background kernel warm-up.
+Normal `wolfie` behavior is unchanged when the flag is absent. The profile can
+also be saved as `"lightweight": true` under `command` in `config.json`.
 
 Evaluate one expression and exit:
 
@@ -155,27 +166,35 @@ ones.
 
 ### Details
 
-| Keybind        | Description                                                  |
-| -------------- | ------------------------------------------------------------ |
-| `Enter`        | Evaluate input                                               |
-| `Ctrl + C`     | Abort evaluation                                             |
-| `Ctrl + D`     | Exit the program                                             |
-| `Ctrl + R`     | Open history browser                                         |
-| `Tab`          | Accept ghost text/current completion or open completion menu |
-| `Ctrl + Space` | Open completion menu                                         |
-| `Esc`          | Close completion menu                                        |
+| Keybind        | Description                                       |
+| -------------- | ------------------------------------------------- |
+| `Enter`        | Evaluate input                                    |
+| `Ctrl + C`     | Abort evaluation                                  |
+| `Ctrl + D`     | Exit the program                                  |
+| `Ctrl + R`     | Open history browser                              |
+| `Tab`          | Accept current completion or open completion menu |
+| `Ctrl + Space` | Open completion menu                              |
+| `Esc`          | Close completion menu                             |
 
-The REPL opens an IDE-style completion popup dynamically as you type symbol characters. Inline ghost text is disabled by default; enable it with `--completion-ghost-text`. Use `Tab` or `Right Arrow` to accept ghost text when enabled, `Tab` to cycle/accept popup entries, `Shift+Tab` to move backward, and `Esc` to close the popup.
+The REPL opens an IDE-style completion popup dynamically as you type symbol
+characters. Inline ghost text is disabled by default; enable it with
+`--completion-ghost-text`. Use `Tab` or `Right Arrow` to accept ghost text when
+enabled, `Tab` to cycle/accept popup entries, `Shift+Tab` to move backward, and
+`Esc` to close the popup.
 
-Symbol completions are queried from the active kernel session as you type, so user-defined symbols, functions, and loaded package symbols are included after each evaluation. The query uses prefix-shaped `Names` calls, for example:
+Symbol completions are queried from the active kernel session as you type, so
+user-defined symbols, functions, and loaded package symbols are included after
+each evaluation. The query uses prefix-shaped `Names` calls, for example:
 
 ```wl
 Names[StringJoin[ prefix, "*"]]
 ```
 
-Matching context names are suggested from `Contexts[]`, and qualified input such as `MyContext`My` queries symbols inside that context.
+Matching context names are suggested from `Contexts[]`, and qualified input such
+as `MyContext`My` queries symbols inside that context.
 
-When the cursor is inside a function call after the first top-level comma, option completions are loaded lazily from:
+When the cursor is inside a function call after the first top-level comma,
+option completions are loaded lazily from:
 
 ```wl
 Options[head]
@@ -214,11 +233,17 @@ work completes.
 The default can also be saved as
 `"graphical-output": true` under `command` in `config.json`.
 
-The same defaults can be set in `config.json` under `command` with `completion-ghost-text` and `no-completion-menu`. The legacy `no-completion-ghost-text` key is still accepted for disabling a previously enabled ghost-text default. `--no-completion-menu` only hides the popup; use `--lightweight` when the completion workers, caches, highlighting queries, and kernel completion traffic must also be disabled.
+The same defaults can be set in `config.json` under `command` with
+`completion-ghost-text` and `no-completion-menu`. The legacy
+`no-completion-ghost-text` key is still accepted for disabling a previously
+enabled ghost-text default. `--no-completion-menu` only hides the popup; use
+`--lightweight` when the completion workers, caches, highlighting queries, and
+kernel completion traffic must also be disabled.
 
 ## Commands
 
-Lines that start with `:` are handled by the CLI instead of being evaluated as Wolfram Language input:
+Lines that start with `:` are handled by the CLI instead of being evaluated as
+Wolfram Language input:
 
 | Command       | Description                     |
 | ------------- | ------------------------------- |
@@ -236,22 +261,32 @@ Lines that start with `:` are handled by the CLI instead of being evaluated as W
 | :theme show   | Show current theme              |
 | :quit         | Quit the shell                  |
 
-Command completions are available only when the line starts with `:`. Wolfram Language completions are disabled for those command lines.
+Command completions are available only when the line starts with `:`. Wolfram
+Language completions are disabled for those command lines.
 
-Use `:!` to run an external command through your shell without leaving the REPL. The command inherits the REPL's standard input, output, and error streams:
+Use `:!` to run an external command through your shell without leaving the REPL.
+The command inherits the REPL's standard input, output, and error streams:
 
 ```sh
 :!ls -la
 :!git status
 ```
 
-While typing a `:!` command, Wolfie uses shell-oriented highlighting and offers completions for executable command names on `PATH`, plus files and directories for path-like arguments. On Windows, command discovery respects `PATHEXT`.
+While typing a `:!` command, Wolfie uses shell-oriented highlighting and offers
+completions for executable command names on `PATH`, plus files and directories
+for path-like arguments. On Windows, command discovery respects `PATHEXT`.
 
 ## Themes
 
-Theme selections made with `:theme`, `:theme {name}`, or the `:setting` / `:config` menu are persisted to the user config file and restored the next time the REPL starts.
+Theme selections made with `:theme`, `:theme {name}`, or the `:setting`/`:config`
+menu are persisted to the user config file and restored the next time the REPL
+starts.
 
-The settings menu can also save CLI defaults such as prompts, completion UI, colors, lightweight mode, and WSTP link options. Explicit command-line flags override these defaults where the CLI has a value to override. To ignore the saved config and use fresh in-memory defaults for only the current session, start Wolfie with `--skip-config`:
+The settings menu can also save CLI defaults such as prompts, completion UI,
+colors, lightweight mode, and WSTP link options. Explicit command-line flags
+override these defaults where the CLI has a value to override. To ignore the
+saved config and use fresh in-memory defaults for only the current session,
+start Wolfie with `--skip-config`:
 
 ```sh
 wolfie --skip-config
@@ -259,30 +294,39 @@ wolfie --skip-config
 
 ```json
 {
-	"$schema": "https://raw.githubusercontent.com/ToneAr/wolfie/main/schemas/config.schema.json",
-	"theme": "dark",
-	"command": {
-		"lightweight": false,
-		"no-color": false,
-		"no-welcome": false,
-		"no-prompt": false,
-		"completion-ghost-text": false,
-		"no-completion-ghost-text": false,
-		"no-completion-menu": false,
-		"graphical-output": false,
-		"linkconnect": false,
-		"linkname": "my-link",
-		"linkprotocol": "SharedMemory",
-		"linkmode": "Listen",
-		"linkoptions": 4,
-		"linkinit": false
-	}
+    "$schema": "https://raw.githubusercontent.com/ToneAr/wolfie/main/schemas/config.schema.json",
+    "theme": "dark",
+    "command": {
+        "lightweight": false,
+        "no-color": false,
+        "no-welcome": false,
+        "no-prompt": false,
+        "completion-ghost-text": false,
+        "no-completion-ghost-text": false,
+        "no-completion-menu": false,
+        "graphical-output": false,
+        "linkconnect": false,
+        "linkname": "my-link",
+        "linkprotocol": "SharedMemory",
+        "linkmode": "Listen",
+        "linkoptions": 4,
+        "linkinit": false
+    }
 }
 ```
 
-The JSON schema for this file is available at [`schemas/config.schema.json`](schemas/config.schema.json). In lightweight mode, the history path is not created or read and `:history` reports that history is disabled.
+The JSON schema for this file is available at
+[`schemas/config.schema.json`](schemas/config.schema.json). In lightweight mode,
+the history path is not created or read and `:history` reports that history is
+disabled.
 
-`linkprotocol` accepts `SharedMemory`, `TCPIP`, or `IntraProcess`. `linkmode` and `linkoptions` are passed to the WSTP link when connecting to an existing kernel, and to the launched kernel command when `wolfie` starts the kernel. With `--linkconnect --linkoptions 4`, `--linkinit` initializes the connected kernel by setting its current directory to the directory where `wolfie` was launched. For config-based link connections, set `"linkinit": true`; `"linkconnect": true` alone does not enable directory initialization.
+`linkprotocol` accepts `SharedMemory`, `TCPIP`, or `IntraProcess`. `linkmode`
+and `linkoptions` are passed to the WSTP link when connecting to an existing
+kernel, and to the launched kernel command when `wolfie` starts the kernel.
+With `--linkconnect --linkoptions 4`, `--linkinit` initializes the connected
+kernel by setting its current directory to the directory where `wolfie` was
+launched. For config-based link connections, set `"linkinit": true`;
+`"linkconnect": true` alone does not enable directory initialization.
 
 Default user paths:
 
@@ -291,52 +335,72 @@ Default user paths:
 | Settings      | `$XDG_CONFIG_HOME/wolfie/config.json` or `~/.config/wolfie/config.json`     | `%APPDATA%\\wolfie\\config.json`    |
 | Custom themes | `$XDG_CONFIG_HOME/wolfie/themes/*.json` or `~/.config/wolfie/themes/*.json` | `%APPDATA%\\wolfie\\themes\\*.json` |
 
-Custom theme files are picked up automatically at REPL startup and shown by `:theme list`. Theme names cannot contain whitespace. A custom theme may inherit from a built-in `base` theme (`dark`, `light`, `solarized`, `gruvbox`, `monokai`, or `plain`) and override any subset of style fields:
+Custom theme files are picked up automatically at REPL startup and shown by
+`:theme list`. Theme names cannot contain whitespace. A custom theme may inherit
+from a built-in `base` theme (`dark`, `light`, `solarized`, `gruvbox`,
+`monokai`, or `plain`) and override any subset of style fields:
 
 ```json
 {
-	"name": "my-theme",
-	"base": "dark",
-	"styles": {
-		"string": "#d7af5f",
-		"comment": {
-			"fg": 244,
-			"italic": true
-		},
-		"number": {
-			"fg": "bright-yellow"
-		},
-		"builtin_symbol": {
-			"fg": "cyan",
-			"bold": true
-		},
-		"visual_selection": {
-			"fg": "white",
-			"bg": "#5f0000"
-		},
-		"prompt_left": {
-			"fg": "bright-red",
-			"bold": true
-		}
-	}
+ "name": "my-theme",
+ "base": "dark",
+ "styles": {
+  "string": "#d7af5f",
+  "comment": {
+   "fg": 244,
+   "italic": true
+  },
+  "number": {
+   "fg": "bright-yellow"
+  },
+  "builtin_symbol": {
+   "fg": "cyan",
+   "bold": true
+  },
+  "visual_selection": {
+   "fg": "white",
+   "bg": "#5f0000"
+  },
+  "prompt_left": {
+   "fg": "bright-red",
+   "bold": true
+  }
+ }
 }
 ```
 
-Colors can be ANSI indexes (`208`), RGB arrays (`[255, 128, 0]`), hex strings (`"#ff8000"`), or common color names such as `red`, `cyan`, `bright-blue`, and `dark-gray`.
+Colors can be ANSI indexes (`208`), RGB arrays (`[255, 128, 0]`), hex strings
+(`"#ff8000"`), or common color names such as `red`, `cyan`, `bright-blue`, and
+`dark-gray`.
 
 ## Kernel Discovery
 
-Set `WOLFRAM_KERNEL` to override the kernel executable. Without that override, the CLI asks `wolframscript -showkernels` for the best local kernel path, accepting both `WolframKernel` and the `wolfram` launcher reported by newer products. It checks the native kernel under `SystemFiles/Kernel/Binaries`, the installation root, and `Executables`, then falls back to the reported launcher, `wolfram-app-discovery`, and finally `WolframKernel` on `PATH`.
+Set `WOLFRAM_KERNEL` to override the kernel executable. Without that override,
+the CLI asks `wolframscript -showkernels` for the best local kernel path,
+accepting both `WolframKernel` and the `wolfram` launcher reported by newer
+products. It checks the native kernel under `SystemFiles/Kernel/Binaries`, the
+installation root, and `Executables`, then falls back to the reported launcher,
+`wolfram-app-discovery`, and finally `WolframKernel` on `PATH`.
 
 ## Kernel during build
 
-The `wstp` crate links Wolfram's WSTP static library at build time. A build machine must have a Wolfram installation or WSTP SDK for the Rust target being built. If discovery does not find it, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` to the target's `SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory.
+The `wstp` crate links Wolfram's WSTP static library at build time. A build
+machine must have a Wolfram installation or WSTP SDK for the Rust target being
+built. If discovery does not find it, set `WSTP_COMPILER_ADDITIONS_DIRECTORY`
+to the target's
+`SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory.
 
 ## Release Builds
 
-GitHub Actions builds packaged binaries when a `v*` or `build*` tag is pushed. `test*` tags and manual workflow runs exercise the build/test path without packaging or publishing artifacts, unless the manual run is explicitly started from a `v*` or `build*` tag ref.
+GitHub Actions builds packaged binaries when a `v*` or `build*` tag is pushed.
+`test*` tags and manual workflow runs exercise the build/test path without
+packaging or publishing artifacts, unless the manual run is explicitly started
+from a `v*` or `build*` tag ref.
 
-Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do not include Wolfram and `wstp-sys` links the target WSTP static library during `cargo build`, the workflow extracts the required `CompilerAdditions` from official Wolfram Engine artifacts before building:
+Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do
+not include Wolfram and `wstp-sys` links the target WSTP static library during
+`cargo build`, the workflow extracts the required `CompilerAdditions` from
+official Wolfram Engine artifacts before building:
 
 | Artifact                | Runner           | Build environment | Rust target                | WSTP source                 |
 | ----------------------- | ---------------- | ----------------- | -------------------------- | --------------------------- |
@@ -347,9 +411,16 @@ Release builds run on GitHub-hosted runners. Because GitHub-hosted runners do no
 | `macos-aarch64`         | `macos-15`       | Native macOS      | `aarch64-apple-darwin`     | Wolfram Engine macOS DMG    |
 | `windows-x86_64`        | `windows-latest` | Native Windows    | `x86_64-pc-windows-msvc`   | Wolfram Engine Windows MSI  |
 
-Locally, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` if automatic discovery does not find the target's `SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory. Linux builds also need the system `uuid` library available for linking, for example the `uuid-dev` package on Debian/Ubuntu systems.
+Locally, set `WSTP_COMPILER_ADDITIONS_DIRECTORY` if automatic discovery does not
+find the target's
+`SystemFiles/Links/WSTP/DeveloperKit/<SystemID>/CompilerAdditions` directory.
+Linux builds also need the system `uuid` library available for linking, for
+example the `uuid-dev` package on Debian/Ubuntu systems.
 
-Wolfie's compiled-in TUI version name is `<cargo-version> <system-id> <build-uid>`. The build UID uses `WOLFIE_BUILD_UID` when set, otherwise GitHub Actions' run ID, and is `local` for ordinary local builds.
+Wolfie's compiled-in TUI version name is
+`<cargo-version> <system-id> <build-uid>`. The build UID uses `WOLFIE_BUILD_UID`
+when set, otherwise GitHub Actions' run ID, and is `local` for ordinary local
+builds.
 
 The packaged binary locates the user's Wolfram installation at runtime using the
 discovery behavior above. Expression, REPL, completion, and script-file
@@ -357,10 +428,14 @@ evaluation run over WSTP.
 
 ## Regenerating build-time kernel data
 
-Builds embed pre-generated kernel data from files committed under `build_tools/`; they do not launch `WolframKernel` during `cargo build`. When the generated data needs to be refreshed, run:
+Builds embed pre-generated kernel data from files committed under
+`build_tools/`; they do not launch `WolframKernel` during `cargo build`. When
+the generated data needs to be refreshed, run:
 
 ```sh
 build_tools/generate-kernel-data.sh
 ```
 
-Set `WOLFRAM_KERNEL=/path/to/WolframKernel` to force a specific kernel. The script currently regenerates `build_tools/builtin_symbols.tsv`; commit that file with the source change that requires the refresh.
+Set `WOLFRAM_KERNEL=/path/to/WolframKernel` to force a specific kernel. The
+script currently regenerates `build_tools/builtin_symbols.tsv`; commit that file
+with the source change that requires the refresh.

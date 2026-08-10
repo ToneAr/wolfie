@@ -530,6 +530,47 @@ fn disabled_completion_menu_does_not_open_popup_bindings() {
 }
 
 #[test]
+fn history_browser_stays_open_after_deleting_its_last_query_character() {
+    let trigger = HistoryTrigger::new();
+    let mut edit_mode = history_primed_edit_mode(completion_edit_mode(true), trigger.clone(), None);
+    trigger.arm();
+
+    // The first key opens the browser; it is intentionally consumed.
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Char('x'), KeyModifiers::NONE)),
+        ReedlineEvent::Menu(HISTORY_MENU.to_string())
+    );
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Char('a'), KeyModifiers::NONE)),
+        ReedlineEvent::Edit(vec![EditCommand::InsertChar('a')])
+    );
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Char('b'), KeyModifiers::NONE)),
+        ReedlineEvent::Edit(vec![EditCommand::InsertChar('b')])
+    );
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Backspace, KeyModifiers::NONE)),
+        ReedlineEvent::Edit(vec![EditCommand::Backspace])
+    );
+
+    // Reedline closes menus after an edit empties the buffer, so reopen it
+    // immediately after removing the final query character.
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Backspace, KeyModifiers::NONE)),
+        ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Edit(vec![EditCommand::Backspace]),
+            ReedlineEvent::Menu(HISTORY_MENU.to_string()),
+        ])
+    );
+
+    // Backspace on the now-empty query explicitly cancels the browser.
+    assert_eq!(
+        edit_mode.parse_event(raw_key(KeyCode::Backspace, KeyModifiers::NONE)),
+        ReedlineEvent::Esc
+    );
+}
+
+#[test]
 fn paste_inserts_text_in_one_edit_without_opening_completion() {
     let mut edit_mode =
         history_primed_edit_mode(completion_edit_mode(true), HistoryTrigger::new(), None);

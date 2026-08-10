@@ -570,6 +570,13 @@ struct HistoryPrimedEditMode {
     /// `+`) and instead just insert normally, so typing filters the history
     /// list instead of dismissing it.
     history_active: Cell<bool>,
+    /// Number of query characters entered since the history menu opened.
+    ///
+    /// Reedline automatically deactivates menus when an edit leaves the line
+    /// buffer empty. Tracking the query lets us immediately reopen the menu
+    /// after deleting its final character, while reserving Backspace on an
+    /// already empty query as an explicit cancel action.
+    history_search_len: Cell<usize>,
 }
 
 impl EditMode for HistoryPrimedEditMode {
@@ -578,6 +585,7 @@ impl EditMode for HistoryPrimedEditMode {
 
         if self.trigger.take() {
             self.history_active.set(true);
+            self.history_search_len.set(0);
             return ReedlineEvent::Menu(HISTORY_MENU.to_string());
         }
         if let Event::Paste(body) = &raw {
@@ -585,6 +593,7 @@ impl EditMode for HistoryPrimedEditMode {
         }
         if is_history_open_key(&raw) {
             self.history_active.set(true);
+            self.history_search_len.set(0);
         }
 
         if !self.history_active.get() {
@@ -607,13 +616,38 @@ impl EditMode for HistoryPrimedEditMode {
             // restores normal menu navigation.
             if is_history_accept_key(&raw) {
                 self.history_active.set(false);
+                self.history_search_len.set(0);
                 return ReedlineEvent::Enter;
             }
             if is_history_cancel_key(&raw) {
                 self.history_active.set(false);
+                self.history_search_len.set(0);
                 return ReedlineEvent::Esc;
             }
+            if is_history_backspace_key(&raw) {
+                let query_len = self.history_search_len.get();
+                if query_len == 0 {
+                    self.history_active.set(false);
+                    return ReedlineEvent::Esc;
+                }
+
+                self.history_search_len.set(query_len - 1);
+                let delete = ReedlineEvent::Edit(vec![EditCommand::Backspace]);
+                return if query_len == 1 {
+                    // Reedline deactivates any menu after an edit empties the
+                    // buffer. Reopen the history menu in the same event so an
+                    // empty query continues to show all history entries.
+                    ReedlineEvent::Multiple(vec![
+                        delete,
+                        ReedlineEvent::Menu(HISTORY_MENU.to_string()),
+                    ])
+                } else {
+                    delete
+                };
+            }
             if let Some(plain_insert) = plain_char_insert(&raw) {
+                self.history_search_len
+                    .set(self.history_search_len.get().saturating_add(1));
                 return plain_insert;
             }
         }
@@ -679,6 +713,21 @@ fn is_history_accept_key(raw: &Event) -> bool {
     )
 }
 
+fn is_history_backspace_key(raw: &Event) -> bool {
+    matches!(
+        raw,
+        Event::Key(KeyEvent {
+            code: KeyCode::Backspace,
+            modifiers: KeyModifiers::NONE,
+            ..
+        }) | Event::Key(KeyEvent {
+            code: KeyCode::Char('h'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        })
+    )
+}
+
 fn is_history_cancel_key(raw: &Event) -> bool {
     matches!(
         raw,
@@ -732,6 +781,7 @@ pub(crate) fn history_primed_edit_mode(
         trigger,
         ghost_completion_selection,
         history_active: Cell::new(false),
+        history_search_len: Cell::new(0),
     })
 }
 
