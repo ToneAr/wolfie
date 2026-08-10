@@ -94,9 +94,23 @@ const STARTING_KERNEL_TEXT_FRAMES: [&str; 10] = ["Evaluating",
 	"Starting Kernel...",
 	"Starting Kernel",
 ];
+const GRAPHICAL_OUTPUT_INITIALIZATION_TEXT_FRAMES: [&str; 10] = [
+    "Initializing graphical output.",
+    "Initializing graphical output.",
+    "Initializing graphical output.",
+    "Initializing graphical output..",
+    "Initializing graphical output..",
+    "Initializing graphical output..",
+    "Initializing graphical output...",
+    "Initializing graphical output...",
+    "Initializing graphical output...",
+    "Initializing graphical output",
+];
 const LOADING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LOADING_FRAME_INTERVAL: Duration = Duration::from_millis(80);
 const MAX_OUT_OF_BAND_PACKETS_PER_POLL: usize = 64;
+const GRAPHICAL_OUTPUT_INITIALIZATION_INPUT: &str =
+    r#"ExportString[Graphics[{}], "SVG"]; "ok""#;
 
 /// Shows progress while a terminal evaluation is waiting for the kernel.
 ///
@@ -153,6 +167,12 @@ pub(crate) fn start_kernel_loading_indicator(
     theme: Option<&ThemeHandle>,
 ) -> Option<LoadingIndicator> {
     LoadingIndicator::start(theme, STARTING_KERNEL_TEXT_FRAMES)
+}
+
+pub(crate) fn start_graphical_output_loading_indicator(
+    theme: Option<&ThemeHandle>,
+) -> Option<LoadingIndicator> {
+    LoadingIndicator::start(theme, GRAPHICAL_OUTPUT_INITIALIZATION_TEXT_FRAMES)
 }
 
 impl Drop for LoadingIndicator {
@@ -329,6 +349,7 @@ pub(crate) struct WstpKernelClient {
     initial_prompt_pending: bool,
     pending_current_directory: Option<PathBuf>,
     graphical_output: Option<GraphicalOutputBackend>,
+    graphical_output_initialized: bool,
 }
 
 impl WstpKernelClient {
@@ -371,6 +392,7 @@ impl WstpKernelClient {
             initial_prompt_pending: true,
             pending_current_directory: None,
             graphical_output: None,
+            graphical_output_initialized: false,
         })
     }
 
@@ -410,6 +432,7 @@ impl WstpKernelClient {
             initial_prompt_pending: true,
             pending_current_directory: None,
             graphical_output: None,
+            graphical_output_initialized: false,
         })
     }
 
@@ -458,12 +481,22 @@ impl WstpKernelClient {
         show_output_prompt: bool,
         rewrite_input: bool,
     ) -> Result<()> {
+        if self.graphical_output.is_some() && !self.graphical_output_initialized {
+            let loading = start_graphical_output_loading_indicator(theme);
+            let initialization = self.initialize_graphical_output();
+            drop(loading);
+            initialization?;
+        }
+
         let previous_input_prompt = self.input_prompt.clone();
         let packets = self.evaluate_input_packets(input, input_handler, theme, rewrite_input)?;
         let input_prompt =
             next_input_prompt_after_evaluation(previous_input_prompt.as_deref(), &packets);
         let svg = if self.graphical_output.is_some() && last_output_name(&packets).is_some() {
-            self.graphical_output_for_last_result()?
+            let loading = start_graphical_output_loading_indicator(theme);
+            let svg = self.graphical_output_for_last_result();
+            drop(loading);
+            svg?
         } else {
             None
         };
@@ -509,6 +542,19 @@ impl WstpKernelClient {
         graphical_output: Option<GraphicalOutputBackend>,
     ) {
         self.graphical_output = graphical_output;
+        self.graphical_output_initialized = false;
+    }
+
+    pub(crate) fn initialize_graphical_output(&mut self) -> Result<()> {
+        if self.graphical_output.is_none() || self.graphical_output_initialized {
+            return Ok(());
+        }
+
+        let start = Instant::now();
+        self.evaluate_to_string(GRAPHICAL_OUTPUT_INITIALIZATION_INPUT)?;
+        self.graphical_output_initialized = true;
+        profile_duration("wstp.graphical_output.initialize", start.elapsed(), "");
+        Ok(())
     }
 
     pub(crate) fn graphical_output_enabled(&self) -> bool {
@@ -1959,9 +2005,10 @@ fn wrap_to_string_query(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        KernelExit, KernelPacket, configure_kernel_launch_command, connect_link_args,
-        expression_packet_text, input_request_prompt,
-        kernel_exit_result, next_input_prompt_after_evaluation, plain_text_result_input,
+        GRAPHICAL_OUTPUT_INITIALIZATION_INPUT, KernelExit, KernelPacket,
+        configure_kernel_launch_command, connect_link_args, expression_packet_text,
+        input_request_prompt, kernel_exit_result, next_input_prompt_after_evaluation,
+        plain_text_result_input,
         render_dialog_marker, render_message_text_with_color,
         render_output_name_with_color, render_startup_message_text,
         rendered_return_text, set_directory_expression, wrap_to_string_query,
@@ -1997,6 +2044,13 @@ mod tests {
             .arg(format!("exit /B {code}"))
             .status()
             .expect("failed to run test shell process")
+    }
+
+    #[test]
+    fn graphical_output_initialization_loads_the_svg_export_path() {
+        assert!(GRAPHICAL_OUTPUT_INITIALIZATION_INPUT.contains("Graphics[{}]"));
+        assert!(GRAPHICAL_OUTPUT_INITIALIZATION_INPUT.contains("ExportString"));
+        assert!(GRAPHICAL_OUTPUT_INITIALIZATION_INPUT.contains("\"SVG\""));
     }
 
     #[test]

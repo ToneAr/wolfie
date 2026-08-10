@@ -286,7 +286,9 @@ fn graphical_output_query_exports_detected_graphics_as_svg() {
 
     assert!(compact_source.contains("ToBoxes[graphic]"));
     assert!(compact_source.contains("_GraphicsBox|_Graphics3DBox|_RasterBox"));
-    assert!(compact_source.contains("ExportString[graphic,\"SVG\"]"));
+    assert!(compact_source.contains("Options[graphic,Background]"));
+    assert!(compact_source.contains("{}->None"));
+    assert!(compact_source.contains("ExportString[graphic,\"SVG\",Background->background]"));
 }
 
 #[test]

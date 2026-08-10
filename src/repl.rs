@@ -31,10 +31,12 @@ use crate::{
     highlighter::WolframHighlighter,
     kernel::{
         KernelClient, KernelConnection, SharedKernel, WolframVersions, kernel_input_prompt,
-        kernel_may_be_slow_to_respond, kernel_status, lock_kernel, spawn_kernel_warmup,
-        wolfram_versions,
+        kernel_may_be_slow_to_respond, kernel_status, lock_kernel, spawn_graphical_output_warmup,
+        spawn_kernel_warmup, wolfram_versions,
     },
-    native_wstp::{KernelInputRequest, start_kernel_loading_indicator},
+    native_wstp::{
+        KernelInputRequest, start_graphical_output_loading_indicator, start_kernel_loading_indicator,
+    },
     theme::{ThemeHandle, ThemeRegistry, UserConfig, selected_theme},
     version,
     wolfram_syntax::{loaded_context_names, remember_user_symbols},
@@ -61,6 +63,7 @@ pub(crate) fn run_repl(
 ) -> Result<()> {
     let completion_epoch = Arc::new(AtomicU64::new(0));
     let shell_prompt_hidden = Arc::new(AtomicBool::new(false));
+    let graphical_output_initializing = Arc::new(AtomicBool::new(false));
     let user_symbols = Arc::new(Mutex::new(HashSet::new()));
     let kernel = Arc::new(Mutex::new(KernelClient::with_connection(
         connection,
@@ -91,6 +94,10 @@ pub(crate) fn run_repl(
         kernel.initialize_repl()?;
     }
     drop(startup_loading);
+
+    if features.graphical_output.is_some() {
+        spawn_graphical_output_warmup(kernel.clone(), graphical_output_initializing.clone());
+    }
 
     let completion_source = features.dynamic_completion.then(|| {
         CompletionSource::new(
@@ -208,8 +215,13 @@ pub(crate) fn run_repl(
                 let evaluation_input = top_level_run_exit_code(input)?
                     .map(|exit_code| exit_code.to_string())
                     .unwrap_or_else(|| input.to_string());
+                let graphical_output_is_initializing =
+                    graphical_output_initializing.load(Ordering::Relaxed);
+                let graphical_loading = graphical_output_is_initializing
+                    .then(|| start_graphical_output_loading_indicator(Some(&theme)));
                 let (mut kernel, may_be_slow) = lock_kernel_for_repl_input(&kernel)?;
-                if may_be_slow {
+                drop(graphical_loading);
+                if !graphical_output_is_initializing && may_be_slow {
                     println!("\n{}: Kernel is starting up", "Wolfie::init");
                 }
                 let mut kernel_input_handler = |request: &KernelInputRequest| {

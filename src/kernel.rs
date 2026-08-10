@@ -286,6 +286,14 @@ impl KernelClient {
         Ok(())
     }
 
+    /// Preloads the graphical export path before its first graphical evaluation.
+    pub(crate) fn initialize_graphical_output(&mut self) -> Result<()> {
+        let _activity = ActivityGuard::new(self.active.clone());
+        self.wstp.initialize_graphical_output()?;
+        self.ready = true;
+        Ok(())
+    }
+
     pub(crate) fn evaluate_repl_input(
         &mut self,
         input: &str,
@@ -826,5 +834,19 @@ pub(crate) fn spawn_kernel_warmup(kernel: SharedKernel) {
         if let Ok(mut client) = lock_kernel(&kernel) {
             let _ = client.query_string("Null");
         }
+    });
+}
+
+/// Preloads graphical export in the background so REPL startup stays responsive.
+pub(crate) fn spawn_graphical_output_warmup(
+    kernel: SharedKernel,
+    graphical_output_initializing: Arc<AtomicBool>,
+) {
+    graphical_output_initializing.store(true, Ordering::Relaxed);
+    std::thread::spawn(move || {
+        if let Ok(mut client) = lock_kernel(&kernel) {
+            let _ = client.initialize_graphical_output();
+        }
+        graphical_output_initializing.store(false, Ordering::Relaxed);
     });
 }
