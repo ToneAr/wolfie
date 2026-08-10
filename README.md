@@ -208,10 +208,9 @@ explicit graphics backgrounds are retained. It tries available backends in this
 order:
 `kitten icat`, `kitty +kitten icat`, `wezterm imgcat`, then `chafa`. If no
 supported backend is available, Wolfie retains its normal textual output.
-Wolfie preloads the SVG export path in the background during REPL startup.
-Wolfie shows an `Initializing graphical output` spinner if that one-time work
-is still in progress when a result needs to be rendered, so startup stays
-responsive and the first graphic does not normally pay the initialization cost.
+Wolfie initializes SVG export lazily when it first encounters a graphical
+result, showing an `Initializing graphical output` spinner while that one-time
+work completes.
 The default can also be saved as
 `"graphical-output": true` under `command` in `config.json`.
 
