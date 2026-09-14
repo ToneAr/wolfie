@@ -53,6 +53,7 @@ enum KernelPacket {
     EnterExpression(Expr),
     EnterText(String),
     Evaluate(Expr),
+    FrontEndCall(Expr),
     InputName(String),
     Input,
     InputString,
@@ -70,6 +71,11 @@ enum KernelPacket {
 }
 
 type KernelInputHandler<'a> = dyn FnMut(&KernelInputRequest) -> Result<Option<String>> + 'a;
+
+struct AuxiliaryLinks<'a> {
+    service: Option<&'a mut Link>,
+    theme: Option<&'a ThemeHandle>,
+}
 
 const LOADING_TEXT_FRAMES: [&str; 10] = [
 	"Evaluating",
@@ -552,6 +558,7 @@ impl WstpKernelClient {
                 &mut self.process,
                 theme,
                 "WSTP service link",
+                true,
                 &mut output,
                 &mut input_prompt,
             )?;
@@ -562,6 +569,7 @@ impl WstpKernelClient {
             &mut self.process,
             theme,
             "WSTP main link out-of-band packet",
+            false,
             &mut output,
             &mut input_prompt,
         )?;
@@ -624,6 +632,7 @@ impl WstpKernelClient {
         let packets = read_packets_until_return(
             link,
             &mut self.process,
+            None,
             None,
             false,
             "WSTP secondary-link setup",
@@ -700,6 +709,7 @@ impl WstpKernelClient {
         interrupt::clear_kernel_interrupt_request();
         let start = Instant::now();
         let input = self.user_input_text_with_pending_initialization(input, rewrite_input)?;
+        let input = interactive_user_input(&input, rewrite_input && input_handler.is_some());
         let link = self.link.as_mut().context("WSTP link is closed")?;
         put_enter_text_packet(link, &input)?;
         profile_duration("wstp.enter_text.sent", start.elapsed(), "");
@@ -715,9 +725,14 @@ impl WstpKernelClient {
         let mut stream_dialog_marker = |marker: &str| {
             print_kernel_text(&format!("{}\n", render_dialog_marker(marker, theme)))
         };
+        let mut auxiliary_links = AuxiliaryLinks {
+            service: self.service_link.as_mut(),
+            theme,
+        };
         let packets = read_packets_until_return(
             link,
             &mut self.process,
+            Some(&mut auxiliary_links),
             input_handler,
             true,
             "WSTP EnterTextPacket evaluation",
@@ -748,9 +763,14 @@ impl WstpKernelClient {
         // from the Return*Packet below, while TextPackets are out-of-band and
         // must be forwarded rather than silently consumed.
         let mut stream_text = |text: &str, _message: Option<(&str, &str)>| print_kernel_text(text);
+        let mut auxiliary_links = AuxiliaryLinks {
+            service: self.service_link.as_mut(),
+            theme: None,
+        };
         let packets = read_packets_until_return(
             link,
             &mut self.process,
+            Some(&mut auxiliary_links),
             None,
             false,
             "WSTP EvaluatePacket query",
@@ -781,6 +801,7 @@ impl WstpKernelClient {
         interrupt::clear_kernel_interrupt_request();
         let start = Instant::now();
         let input = self.user_input_text_with_pending_initialization(input, true)?;
+        let input = interactive_user_input(&input, input_handler.is_some());
         let wrapped = plain_text_result_input(&input);
         let expr = call("System`ToExpression", vec![Expr::string(&wrapped)]);
         let link = self.link.as_mut().context("WSTP link is closed")?;
@@ -800,9 +821,14 @@ impl WstpKernelClient {
         let mut stream_dialog_marker = |marker: &str| {
             print_kernel_text(&format!("{}\n", render_dialog_marker(marker, theme)))
         };
+        let mut auxiliary_links = AuxiliaryLinks {
+            service: self.service_link.as_mut(),
+            theme,
+        };
         let packets = read_packets_until_return(
             link,
             &mut self.process,
+            Some(&mut auxiliary_links),
             input_handler,
             false,
             "WSTP EvaluatePacket text evaluation",
@@ -897,11 +923,37 @@ fn secondary_link_setup_input(
     )
 }
 
+fn drain_auxiliary_links(
+    links: &mut AuxiliaryLinks<'_>,
+    process: &mut KernelProcess,
+) -> Result<()> {
+    let mut output = String::new();
+    let mut input_prompt = None;
+
+    if let Some(link) = links.service.as_deref_mut() {
+        drain_ready_link_packets(
+            link,
+            process,
+            links.theme,
+            "WSTP foreground service link",
+            true,
+            &mut output,
+            &mut input_prompt,
+        )?;
+    }
+    if !output.is_empty() {
+        print_kernel_text(&output)?;
+    }
+
+    Ok(())
+}
+
 fn drain_ready_link_packets(
     link: &mut Link,
     process: &mut KernelProcess,
     theme: Option<&ThemeHandle>,
     operation: &str,
+    front_end_link: bool,
     output: &mut String,
     input_prompt: &mut Option<String>,
 ) -> Result<()> {
@@ -913,7 +965,11 @@ fn drain_ready_link_packets(
             break;
         }
         let packet_id = next_ready_packet_id(link, process, operation)?;
-        let packet = read_packet_payload(link, packet_id)?;
+        let packet = if front_end_link && packet_id == sys::CALLPKT {
+            KernelPacket::FrontEndCall(read_expr(link, "front-end CallPacket")?)
+        } else {
+            read_packet_payload(link, packet_id)?
+        };
         trace_packet(operation, &packet);
 
         match &packet {
@@ -965,6 +1021,7 @@ fn drain_ready_link_packets(
             KernelPacket::Call { function, args } => {
                 append_packet_output(output, &format!("CallPacket[{function}, {args}]"));
             }
+            KernelPacket::FrontEndCall(_) => {}
             KernelPacket::Unknown(id) => {
                 append_packet_output(output, &format!("Unknown WSTP packet {id}"));
             }
@@ -982,7 +1039,14 @@ fn drain_ready_link_packets(
             | KernelPacket::Resume
             | KernelPacket::Suspend => {}
         }
+        let respond_to_front_end_call = matches!(packet, KernelPacket::FrontEndCall(_));
         finish_packet(link, operation)?;
+        if respond_to_front_end_call {
+            // The links created by `CreateFrontEndLinks` expect every
+            // CallPacket to receive a reply. Wolfie has no notebook front end,
+            // so Null reports that the requested front-end value is unavailable.
+            put_null_return_packet(link, operation)?;
+        }
     }
 
     Ok(())
@@ -1056,6 +1120,17 @@ impl Drop for WstpKernelClient {
     }
 }
 
+fn interactive_user_input(input: &str, can_seek_input: bool) -> String {
+    if can_seek_input {
+        // CloudConnect treats every $Linked kernel as noninteractive. Wolfie
+        // services input packets, so expose terminal capability only for the
+        // duration of foreground evaluations with an input handler.
+        format!("Block[{{System`$Linked = False}},\n{input}\n]")
+    } else {
+        input.to_owned()
+    }
+}
+
 fn wstp_user_input_text(input: &str) -> String {
     if input.contains("Input[") || input.contains("InputString[") {
         wolfram_function_call(
@@ -1086,6 +1161,17 @@ Function[
     )
 }
 
+fn put_null_return_packet(link: &mut Link, operation: &str) -> Result<()> {
+    link.put_function("System`ReturnPacket", 1)
+        .map_err(|err| anyhow!("failed to begin {operation} response: {err:?}"))?;
+    link.put_symbol("System`Null")
+        .map_err(|err| anyhow!("failed to write {operation} response: {err:?}"))?;
+    link.end_packet()
+        .map_err(|err| anyhow!("failed to finish {operation} response: {err:?}"))?;
+    link.flush()
+        .map_err(|err| anyhow!("failed to flush {operation} response: {err:?}"))
+}
+
 fn put_enter_text_packet(link: &mut Link, input: &str) -> Result<()> {
     link.put_function("System`EnterTextPacket", 1)
         .map_err(|err| anyhow!("failed to begin WSTP EnterTextPacket: {err:?}"))?;
@@ -1102,7 +1188,7 @@ fn read_initial_input_name_packet(link: &mut Link, process: &mut KernelProcess) 
     let mut startup_message_printed = false;
 
     loop {
-        let packet_id = next_packet_id(link, process, "initial prompt")?;
+        let packet_id = next_packet_id(link, process, "initial prompt", None)?;
         let packet = read_packet_payload(link, packet_id)?;
         match &packet {
             KernelPacket::InputName(prompt) => {
@@ -1140,6 +1226,7 @@ fn read_initial_input_name_packet(link: &mut Link, process: &mut KernelProcess) 
 fn read_packets_until_return(
     link: &mut Link,
     process: &mut KernelProcess,
+    mut auxiliary_links: Option<&mut AuxiliaryLinks<'_>>,
     mut input_handler: Option<&mut KernelInputHandler<'_>>,
     read_next_input_name: bool,
     operation: &str,
@@ -1149,13 +1236,27 @@ fn read_packets_until_return(
 ) -> Result<Vec<KernelPacket>> {
     let mut packets = Vec::new();
     let mut pending_message_identifier: Option<(String, String)> = None;
-    // A prompt emitted by `Input`/`InputString` arrives as an unterminated
-    // TextPacket immediately before the input request. Hold it briefly so the
-    // line editor can render it beside the user's input instead of below it.
+    // Defer unterminated text only while another packet is already available:
+    // it may be an Input/InputString prompt, but authentication instructions
+    // must be visible before the kernel waits for the user to act.
     let mut pending_input_prompt: Option<String> = None;
+    let mut input_prompt_streamed = false;
 
     loop {
-        let packet_id = next_packet_id(link, process, operation)?;
+        if flush_pending_text_before_wait(
+            link,
+            &mut pending_input_prompt,
+            &mut stream_text,
+            &mut loading,
+        )? {
+            input_prompt_streamed = true;
+        }
+        let packet_id = next_packet_id(
+            link,
+            process,
+            operation,
+            auxiliary_links.as_deref_mut(),
+        )?;
         let packet = read_packet_payload(link, packet_id)?;
         trace_packet(operation, &packet);
         let is_input_request = matches!(packet, KernelPacket::Input | KernelPacket::InputString);
@@ -1188,6 +1289,7 @@ fn read_packets_until_return(
                 pending_message_identifier = Some((symbol.clone(), tag.clone()));
             }
             KernelPacket::Text(text) => {
+                input_prompt_streamed = false;
                 if let Some(previous_text) = pending_input_prompt.take()
                     && let Some(render) = stream_text.as_deref_mut()
                 {
@@ -1230,11 +1332,11 @@ fn read_packets_until_return(
         let input_request = match packet {
             KernelPacket::Input => Some(KernelInputRequest {
                 kind: KernelInputKind::Expression,
-                prompt: input_request_prompt(&packets),
+                prompt: read_input_request_prompt(link, &packets, input_prompt_streamed)?,
             }),
             KernelPacket::InputString => Some(KernelInputRequest {
                 kind: KernelInputKind::String,
-                prompt: input_request_prompt(&packets),
+                prompt: read_input_request_prompt(link, &packets, input_prompt_streamed)?,
             }),
             _ => None,
         };
@@ -1270,9 +1372,35 @@ fn read_packets_until_return(
     }
 }
 
-fn next_packet_id(link: &mut Link, process: &mut KernelProcess, operation: &str) -> Result<i32> {
+fn flush_pending_text_before_wait(
+    link: &Link,
+    pending_text: &mut Option<String>,
+    stream_text: &mut Option<&mut dyn FnMut(&str, Option<(&str, &str)>) -> Result<()>>,
+    loading: &mut Option<&mut EvaluationLoadingIndicator>,
+) -> Result<bool> {
+    if pending_text.is_none() || link.is_ready() {
+        return Ok(false);
+    }
+    if let Some(render) = stream_text.as_deref_mut()
+        && let Some(text) = pending_text.take()
+    {
+        render(&text, None)?;
+        if let Some(loading) = loading.as_deref_mut() {
+            loading.show_below_text(&text);
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn next_packet_id(
+    link: &mut Link,
+    process: &mut KernelProcess,
+    operation: &str,
+    auxiliary_links: Option<&mut AuxiliaryLinks<'_>>,
+) -> Result<i32> {
     let wait_start = Instant::now();
-    wait_for_packet_activity(link, process, operation)?;
+    wait_for_packet_activity(link, process, operation, auxiliary_links)?;
     profile_duration("wstp.packet.wait", wait_start.elapsed(), operation);
     let next_start = Instant::now();
     match link.raw_next_packet() {
@@ -1310,8 +1438,12 @@ fn wait_for_packet_activity(
     link: &mut Link,
     process: &mut KernelProcess,
     operation: &str,
+    mut auxiliary_links: Option<&mut AuxiliaryLinks<'_>>,
 ) -> Result<()> {
     while !link.is_ready() {
+        if let Some(auxiliary_links) = auxiliary_links.as_deref_mut() {
+            drain_auxiliary_links(auxiliary_links, process)?;
+        }
         if let KernelProcess::Launched(process) = process
             && let Some(status) = process
                 .try_wait()
@@ -1592,6 +1724,21 @@ fn box_grid_text(expr: &Expr) -> Option<String> {
 
 
 
+fn read_input_request_prompt(
+    link: &mut Link,
+    packets: &[KernelPacket],
+    input_prompt_streamed: bool,
+) -> Result<String> {
+    let prompt = read_string(link, "input request prompt")?;
+    if !prompt.is_empty() {
+        Ok(prompt)
+    } else if input_prompt_streamed {
+        Ok(String::new())
+    } else {
+        Ok(input_request_prompt(packets))
+    }
+}
+
 fn input_request_prompt(packets: &[KernelPacket]) -> String {
     packets
         .iter()
@@ -1749,6 +1896,7 @@ fn packet_summary(packet: &KernelPacket) -> String {
         KernelPacket::EnterExpression(expr) => format!("EnterExpressionPacket[{expr}]"),
         KernelPacket::EnterText(text) => format!("EnterTextPacket[{}]", debug_text(text)),
         KernelPacket::Evaluate(expr) => format!("EvaluatePacket[{expr}]"),
+        KernelPacket::FrontEndCall(expr) => format!("CallPacket[{expr}]"),
         KernelPacket::InputName(text) => format!("InputNamePacket[{}]", debug_text(text)),
         KernelPacket::Input => "InputPacket[]".to_owned(),
         KernelPacket::InputString => "InputStringPacket[]".to_owned(),
@@ -1874,6 +2022,7 @@ fn render_packets(
             KernelPacket::Evaluate(expr) => {
                 print_kernel_text(&format!("EvaluatePacket[{expr}]\n"))?;
             }
+            KernelPacket::FrontEndCall(_) => {}
             KernelPacket::Display
             | KernelPacket::DisplayEnd
             | KernelPacket::Input
@@ -1983,13 +2132,132 @@ mod tests {
         KernelExit, KernelPacket, configure_kernel_launch_command, connect_link_args,
         expression_packet_text, input_request_prompt, kernel_exit_result,
         next_input_prompt_after_evaluation, plain_text_result_input,
-        render_dialog_marker, render_message_text_with_color,
+        put_null_return_packet, render_dialog_marker, render_message_text_with_color,
         render_output_name_with_color, render_startup_message_text,
         rendered_return_text, set_directory_expression, wrap_to_string_query,
     };
     use crate::theme::{Theme, ThemeHandle};
     use std::process::{Command, ExitStatus};
     use wolfram_expr::{Expr, Symbol};
+    use wstp::Link;
+
+    #[test]
+    fn interactive_capability_is_scoped_to_evaluations_with_an_input_handler() {
+        assert_eq!(
+            super::interactive_user_input("f[];", true),
+            "Block[{System`$Linked = False},\nf[];\n]",
+        );
+        assert_eq!(super::interactive_user_input("f[];", false), "f[];");
+    }
+
+    #[test]
+    fn input_packet_prompt_takes_precedence_over_previous_output() {
+        let mut link = Link::new_loopback().unwrap();
+        link.put_str("Verification code: ").unwrap();
+        let packets = vec![KernelPacket::Text("Earlier output".to_string())];
+        assert_eq!(
+            super::read_input_request_prompt(&mut link, &packets, true).unwrap(),
+            "Verification code: ",
+        );
+    }
+
+    #[test]
+    fn empty_input_packet_prompt_reuses_only_unprinted_text() {
+        let mut link = Link::new_loopback().unwrap();
+        let packets = vec![KernelPacket::Text("Enter value: ".to_string())];
+        link.put_str("").unwrap();
+        assert_eq!(
+            super::read_input_request_prompt(&mut link, &packets, false).unwrap(),
+            "Enter value: ",
+        );
+        link.put_str("").unwrap();
+        assert_eq!(
+            super::read_input_request_prompt(&mut link, &packets, true).unwrap(),
+            "",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a local Wolfram kernel with CloudObject"]
+    fn cloud_authentication_terminal_prompt_round_trip() {
+        let mut kernel = super::WstpKernelClient::launch(None, None).unwrap();
+        kernel.ensure_secondary_links().unwrap();
+        let linked_before = kernel.evaluate_to_string("$Linked").unwrap();
+        kernel.evaluate_to_string("Needs[\"CloudObject`\"]; Null").unwrap();
+        let mut prompts = Vec::new();
+        let mut handler = |request: &super::KernelInputRequest| {
+            prompts.push(request.prompt.clone());
+            Ok(Some("wolfie-test-verifier".to_string()))
+        };
+        // Exercise Wolfram's real terminal login dialog with a local URL
+        // producer instead of contacting the authentication server.
+        kernel.evaluate_once(
+            "wolfieAuthTest = CloudObject`Private`promptForWebLogin[\
+                Function[\"https://example.invalid/wolfie-auth-test\"]];",
+            None,
+            Some(&mut handler),
+            false,
+            false,
+        ).unwrap();
+        assert_eq!(prompts, ["Verification code: "]);
+        assert_eq!(
+            kernel.evaluate_to_string("wolfieAuthTest[\"oauthVerifier\"]").unwrap(),
+            "wolfie-test-verifier",
+        );
+        assert_eq!(kernel.evaluate_to_string("$Linked").unwrap(), linked_before);
+    }
+
+    #[test]
+    fn authentication_instructions_are_streamed_before_waiting_for_another_packet() {
+        let link = Link::new_loopback().expect("loopback link should open");
+        let mut pending = Some("Authenticate in your browser: https://example.com/login".to_string());
+        let mut output = String::new();
+        let mut render = |text: &str, _message: Option<(&str, &str)>| {
+            output.push_str(text);
+            Ok(())
+        };
+        assert!(super::flush_pending_text_before_wait(
+            &link, &mut pending, &mut Some(&mut render), &mut None,
+        ).unwrap());
+        assert!(!super::flush_pending_text_before_wait(
+            &link, &mut pending, &mut Some(&mut render), &mut None,
+        ).unwrap());
+        assert!(pending.is_none());
+        assert_eq!(output, "Authenticate in your browser: https://example.com/login");
+    }
+
+    #[test]
+    fn pending_prompt_is_preserved_when_next_packet_is_ready() {
+        let mut link = Link::new_loopback().expect("loopback link should open");
+        link.put_function("System`InputStringPacket", 1).unwrap();
+        link.put_str("").unwrap();
+        link.end_packet().unwrap();
+        link.flush().unwrap();
+        let mut pending = Some("Password: ".to_string());
+        let mut render = |_text: &str, _message: Option<(&str, &str)>| {
+            panic!("prompt should be rendered by the input handler");
+        };
+        assert!(!super::flush_pending_text_before_wait(
+            &link, &mut pending, &mut Some(&mut render), &mut None,
+        ).unwrap());
+        assert_eq!(pending.as_deref(), Some("Password: "));
+    }
+
+    #[test]
+    fn unsupported_front_end_call_response_is_return_packet_null() {
+        let mut link = Link::new_loopback().expect("loopback link should open");
+
+        put_null_return_packet(&mut link, "test front-end call")
+            .expect("front-end response should be written");
+
+        assert_eq!(
+            link.get_expr().expect("response should be readable"),
+            Expr::normal(
+                Symbol::new("System`ReturnPacket"),
+                vec![Expr::symbol(Symbol::new("System`Null"))],
+            ),
+        );
+    }
 
     #[test]
     fn kernel_exit_result_preserves_child_exit_code() {
