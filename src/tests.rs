@@ -1,5 +1,6 @@
 use crate::{
-    commands::*, completion::*, editor::*, highlighter::*, kernel::KernelStatus, theme::*, wl::*,
+    commands::*, completion::*, editor::*, highlighter::*,
+    kernel::{KernelClient, KernelConnection, KernelStatus}, theme::*, wl::*,
     wolfram_syntax::*,
 };
 use anyhow::Result;
@@ -19,6 +20,45 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[test]
+#[ignore = "requires a local Wolfram Kernel"]
+fn repl_evaluation_completes_with_wolfram_progress_reporting() {
+    let mut kernel = KernelClient::with_connection(
+        KernelConnection::Launch {
+            link_options: None,
+            link_mode: None,
+        },
+        None,
+    )
+    .expect("kernel should launch");
+    let theme = ThemeHandle::builtin(Theme::plain());
+    let mut input_handler = |_request: &crate::native_wstp::KernelInputRequest| Ok(None);
+    kernel.initialize_repl().expect("REPL should initialize");
+
+    kernel
+        .evaluate_repl_input(
+            r#"
+                settings = Progress`StartProgress[
+                    <|
+                        "ElapsedTime" :> Automatic,
+                        "Text" :> "Downloading\[Ellipsis]",
+                        "ByteCountTotal" :> 0,
+                        "ByteCountCurrent" :> 289,
+                        "Progress" :> None
+                    |>,
+                    "Delay" :> 0.1
+                ];
+                Pause[1];
+                Progress`EndProgress[settings];
+                42
+            "#,
+            &theme,
+            &mut input_handler,
+            false,
+        )
+        .expect("evaluation should complete");
+}
 
 fn test_styles() -> ThemeStyles {
     Theme::dark().styles()

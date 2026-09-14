@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "wolfie"
-version = "0.9.19"
+version = "0.9.20"
 dependencies = [
  "anyhow",
  "clap",

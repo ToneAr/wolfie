@@ -93,6 +93,17 @@ session alive for REPL state:
 wolfie
 ```
 
+For Wolfram Cloud authentication, run `CloudConnect[]` or
+`CloudConnect["your Wolfram ID"]` in the REPL. With browser-based authentication,
+Wolfie displays Wolfram's sign-in URL and verification-code prompt. Open the URL
+in your browser, sign in, and enter the code in Wolfie; do not put your password
+in a REPL expression.
+
+Wolfie temporarily sets `$Linked = False` during foreground expression
+evaluations with an input handler so Wolfram recognizes terminal input support.
+The original value is restored afterward; background queries and script-file
+execution do not receive this override.
+
 Use `--no-welcome` to skip the welcome banner while keeping normal input/output
 prompts, or `--no-prompt` to hide all REPL prompts and the welcome banner:
 
