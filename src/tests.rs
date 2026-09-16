@@ -28,6 +28,7 @@ fn repl_evaluation_completes_with_wolfram_progress_reporting() {
         KernelConnection::Launch {
             link_options: None,
             link_mode: None,
+            kernel_args: vec![],
         },
         None,
     )

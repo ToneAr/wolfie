@@ -59,6 +59,10 @@ struct Args {
     #[arg(short = 'c', long = "code")]
     eval: Option<String>,
 
+    /// Extra kernel command-line arguments, parsed using POSIX-style quoting (no shell expansion).
+    #[arg(long = "kernel-args", value_name = "args", allow_hyphen_values = true)]
+    kernel_args: Option<String>,
+
     /// Connect to an existing WSTP link instead of launching a new kernel.
     #[arg(long = "linkconnect")]
     link_connect: bool,
@@ -118,6 +122,7 @@ struct EffectiveArgs {
     graphical_output: bool,
     config_mode: ConfigMode,
     eval: Option<String>,
+    kernel_args: Vec<String>,
     link_connect: bool,
     link_name: Option<String>,
     link_protocol: LinkProtocol,
@@ -250,7 +255,7 @@ fn direct_script_arg_index(args: &[OsString]) -> Option<usize> {
 fn value_option_consumes_next_arg(arg: &str) -> bool {
     matches!(
         arg,
-        "-c" | "--code" | "--linkname" | "--linkprotocol" | "--linkoptions" | "--linkmode"
+        "-c" | "--code" | "--kernel-args" | "--linkname" | "--linkprotocol" | "--linkoptions" | "--linkmode"
     )
 }
 
@@ -292,6 +297,13 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
     };
     let command = config.command;
     let link_connect = args.link_connect || command.linkconnect.unwrap_or(false);
+    if link_connect && args.kernel_args.is_some() {
+        bail!("--kernel-args cannot be used with --linkconnect");
+    }
+    let kernel_args = args.kernel_args.as_deref().map_or_else(
+        || Ok(Vec::new()),
+        |value| shlex::split(value).context("invalid --kernel-args: unmatched quote or trailing backslash"),
+    )?;
     let link_options = args.link_options.or(command.linkoptions);
     let link_init = args.link_init || command.linkinit.unwrap_or(false);
 
@@ -340,6 +352,7 @@ fn effective_args(parsed: ParsedArgs, config: UserConfig) -> Result<EffectiveArg
             || command.no_completion_menu.unwrap_or(false),
         graphical_output: args.graphical_output || command.graphical_output.unwrap_or(false),
         eval: args.eval,
+        kernel_args,
         link_connect,
         link_name: if link_connect {
             args.link_name.or(command.linkname)
@@ -376,6 +389,7 @@ fn kernel_connection(
         (true, None) => bail!("--linkconnect requires --linkname <name>"),
         (false, Some(_)) => bail!("--linkname requires --linkconnect"),
         (false, None) => Ok(KernelConnection::Launch {
+            kernel_args: args.kernel_args.clone(),
             link_options: args.link_options,
             link_mode: args.link_mode.clone(),
         }),
@@ -421,6 +435,74 @@ mod tests {
 
     fn os_strings(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn kernel_args_preserve_quoting_and_literal_shell_characters() {
+        let args = effective(Args::try_parse_from([
+            "wolfie", "--kernel-args",
+            r#"-noinit -run 'Print["hello world"]' escaped\ space "" '$HOME' '$(echo nope)' '*.wl' "a\"b" 'C:\path'"#,
+        ]).expect("kernel args should parse"));
+        let KernelConnection::Launch { kernel_args, .. } = connection(&args).unwrap() else {
+            panic!("expected launched kernel");
+        };
+        assert_eq!(kernel_args, [
+            "-noinit", "-run", "Print[\"hello world\"]", "escaped space", "", "$HOME",
+            "$(echo nope)", "*.wl", "a\"b", "C:\\path",
+        ]);
+    }
+
+    #[test]
+    fn kernel_args_accept_empty_values_and_reject_invalid_quoting() {
+        for value in ["", "   "] {
+            let args = effective(Args::try_parse_from(["wolfie", "--kernel-args", value]).unwrap());
+            assert!(args.kernel_args.is_empty());
+        }
+        for value in ["'unclosed", "\"unclosed", "trailing\\"] {
+            let args = Args::try_parse_from(["wolfie", "--kernel-args", value]).unwrap();
+            let err = effective_args(parsed(args), UserConfig::default()).unwrap_err();
+            assert!(err.to_string().contains("invalid --kernel-args"));
+        }
+        assert!(Args::try_parse_from(["wolfie", "--kernel-args"]).is_err());
+    }
+
+    #[test]
+    fn kernel_args_work_with_direct_scripts_and_equals_syntax() {
+        for values in [
+            vec!["wolfie", "--kernel-args", "startup.wl", "script.wls", "--script-flag"],
+            vec!["wolfie", "--kernel-args=startup.wl", "script.wls", "--script-flag"],
+        ] {
+            let normalized = normalized_args(os_strings(&values));
+            assert!(normalized.direct_script);
+            let args = effective_args(ParsedArgs {
+                args: Args::try_parse_from(normalized.args).unwrap(),
+                direct_script: normalized.direct_script,
+            }, UserConfig::default()).unwrap();
+            assert_eq!(args.kernel_args, ["startup.wl"]);
+            assert_eq!(args.file.as_deref(), Some(Path::new("script.wls")));
+            assert_eq!(args.script_args, os_strings(&["--script-flag"]));
+        }
+        let args = effective(Args::try_parse_from([
+            "wolfie", "--kernel-args=-noinit", "-c", "1+1",
+        ]).unwrap());
+        assert_eq!(args.kernel_args, ["-noinit"]);
+        assert_eq!(args.eval.as_deref(), Some("1+1"));
+    }
+
+    #[test]
+    fn kernel_args_reject_cli_and_configured_existing_connections() {
+        for cli_connect in [false, true] {
+            let mut values = vec!["wolfie", "--kernel-args", "-noinit"];
+            if cli_connect {
+                values.extend(["--linkconnect", "--linkname", "test-link"]);
+            }
+            let args = Args::try_parse_from(values).unwrap();
+            let mut config = UserConfig::default();
+            config.command.linkconnect = Some(true);
+            config.command.linkname = Some("test-link".to_string());
+            let err = effective_args(parsed(args), config).unwrap_err();
+            assert!(err.to_string().contains("--kernel-args cannot be used with --linkconnect"));
+        }
     }
 
     #[test]
@@ -996,6 +1078,7 @@ mod tests {
             KernelConnection::Launch {
                 link_options,
                 link_mode,
+                ..
             } => {
                 assert_eq!(link_options, Some(4));
                 assert_eq!(link_mode.as_deref(), Some("Listen"));

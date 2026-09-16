@@ -131,6 +131,24 @@ Evaluate one expression and exit:
 wolfie -c 'Range[5]^2'
 ```
 
+Pass additional command-line arguments directly to the Wolfram kernel executable
+with `--kernel-args` (works in the REPL, one-shot, and script modes):
+
+```sh
+wolfie --kernel-args '-noinit'
+wolfie --kernel-args '-noinit -run "Print[123]"' -c 'Range[5]^2'
+wolfie --kernel-args='-noinit' --file script.wls -- arg1
+```
+
+The string is split using POSIX-style quoting: single/double quotes preserve spaces
+and backslashes escape characters. No shell is invoked, so Wolfie does not expand
+variables, wildcards, or command substitutions; unquoted `#` starts a comment.
+Quote the whole string in your shell as shown above. Malformed quoting is rejected.
+These arguments are appended after Wolfie's WSTP arguments; avoid conflicting link
+settings that could prevent the connection. `--kernel-args` cannot be used with
+`--linkconnect`, including when connecting is enabled in your config. Arguments
+after `--` remain script arguments, not kernel startup options.
+
 Pass WSTP link mode and link options through to a kernel launched by `wolfie`:
 
 ```sh

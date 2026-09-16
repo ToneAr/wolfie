@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "wolfie"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "clap",
@@ -1386,6 +1386,7 @@ dependencies = [
  "reedline",
  "serde",
  "serde_json",
+ "shlex",
  "wolfram-app-discovery",
  "wolfram-expr",
  "wstp",

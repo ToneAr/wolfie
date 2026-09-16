@@ -33,6 +33,7 @@ pub(crate) enum KernelConnection {
     Launch {
         link_options: Option<u32>,
         link_mode: Option<String>,
+        kernel_args: Vec<String>,
     },
     Connect {
         link_name: String,
@@ -174,7 +175,12 @@ impl KernelClient {
             KernelConnection::Launch {
                 link_options,
                 link_mode,
-            } => native_wstp::WstpKernelClient::launch(link_options, link_mode.as_deref())?,
+                kernel_args,
+            } => native_wstp::WstpKernelClient::launch(
+                link_options,
+                link_mode.as_deref(),
+                &kernel_args,
+            )?,
             KernelConnection::Connect {
                 link_name,
                 link_protocol,

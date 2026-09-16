@@ -356,7 +356,11 @@ pub(crate) struct WstpKernelClient {
 }
 
 impl WstpKernelClient {
-    pub(crate) fn launch(link_options: Option<u32>, link_mode: Option<&str>) -> Result<Self> {
+    pub(crate) fn launch(
+        link_options: Option<u32>,
+        link_mode: Option<&str>,
+        kernel_args: &[String],
+    ) -> Result<Self> {
         let start = Instant::now();
         let path = kernel_path()?;
         let mut link = Link::listen(LinkProtocol::SharedMemory, "")
@@ -364,7 +368,13 @@ impl WstpKernelClient {
         let link_name = link.link_name();
         let spawn_start = Instant::now();
         let mut command = Command::new(&path);
-        configure_kernel_launch_command(&mut command, &link_name, link_options, link_mode);
+        configure_kernel_launch_command(
+            &mut command,
+            &link_name,
+            link_options,
+            link_mode,
+            kernel_args,
+        );
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1098,6 +1108,7 @@ fn configure_kernel_launch_command(
     link_name: &str,
     link_options: Option<u32>,
     link_mode: Option<&str>,
+    kernel_args: &[String],
 ) {
     command
         .arg("-wstp")
@@ -1112,6 +1123,7 @@ fn configure_kernel_launch_command(
     if let Some(link_options) = link_options {
         command.arg("-linkoptions").arg(link_options.to_string());
     }
+    command.args(kernel_args);
 }
 
 impl Drop for WstpKernelClient {
@@ -2180,7 +2192,7 @@ mod tests {
     #[test]
     #[ignore = "requires a local Wolfram kernel with CloudObject"]
     fn cloud_authentication_terminal_prompt_round_trip() {
-        let mut kernel = super::WstpKernelClient::launch(None, None).unwrap();
+        let mut kernel = super::WstpKernelClient::launch(None, None, &[]).unwrap();
         kernel.ensure_secondary_links().unwrap();
         let linked_before = kernel.evaluate_to_string("$Linked").unwrap();
         kernel.evaluate_to_string("Needs[\"CloudObject`\"]; Null").unwrap();
@@ -2317,14 +2329,14 @@ mod tests {
     #[test]
     fn kernel_launch_command_adds_linkoptions_only_when_present() {
         let mut command = Command::new("WolframKernel");
-        configure_kernel_launch_command(&mut command, "test-link", None, None);
+        configure_kernel_launch_command(&mut command, "test-link", None, None, &[]);
 
         let args = command_args(&command);
         assert!(!args.contains(&"-linkoptions".to_string()));
         assert!(!args.contains(&"-linkmode".to_string()));
 
         let mut command = Command::new("WolframKernel");
-        configure_kernel_launch_command(&mut command, "test-link", Some(4), Some("Listen"));
+        configure_kernel_launch_command(&mut command, "test-link", Some(4), Some("Listen"), &[]);
 
         assert_eq!(
             command_args(&command),
@@ -2339,6 +2351,46 @@ mod tests {
                 "Listen",
                 "-linkoptions",
                 "4",
+            ]
+        );
+    }
+
+    #[test]
+    fn kernel_launch_command_preserves_exact_kernel_args_after_wstp_options() {
+        let mut command = Command::new("WolframKernel");
+        let kernel_args = vec![
+            "-run".to_string(),
+            "Print[\"hello world\"]".to_string(),
+            "".to_string(),
+            "  padded argument  ".to_string(),
+            r#"$HOME ${HOME} $(echo literal) `echo literal` ; & | < > * ? ' \" \\"#.to_string(),
+        ];
+        configure_kernel_launch_command(
+            &mut command,
+            "test-link",
+            Some(4),
+            Some("Listen"),
+            &kernel_args,
+        );
+
+        assert_eq!(
+            command_args(&command),
+            [
+                "-wstp",
+                "-linkprotocol",
+                "SharedMemory",
+                "-linkconnect",
+                "-linkname",
+                "test-link",
+                "-linkmode",
+                "Listen",
+                "-linkoptions",
+                "4",
+                "-run",
+                "Print[\"hello world\"]",
+                "",
+                "  padded argument  ",
+                r#"$HOME ${HOME} $(echo literal) `echo literal` ; & | < > * ? ' \" \\"#,
             ]
         );
     }
